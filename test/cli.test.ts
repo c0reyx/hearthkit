@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { parsePayload } from '../src/cli/program.js';
 import { RealExec } from '../src/core/exec.js';
 import { makeBareRemote } from './helpers/gitrepo.js';
 import { mkTmpDir } from './helpers/tmp.js';
@@ -125,5 +126,19 @@ describe('hearth CLI (end to end against a local bare remote)', () => {
     expect(log).toContain('"command":"handoff capture"');
     const bad = await hearth(['handoff', 'capture'], { home, input: 'not json at all' });
     expect(bad.code).toBe(0);
+  });
+});
+
+describe('parsePayload', () => {
+  it('returns empty object for empty, non-JSON, non-object, and null inputs', () => {
+    expect(parsePayload('')).toEqual({});
+    expect(parsePayload('not json')).toEqual({});
+    expect(parsePayload('[1,2,3]')).toEqual({});
+    expect(parsePayload('null')).toEqual({});
+    expect(parsePayload('42')).toEqual({});
+  });
+
+  it('returns the parsed object for valid JSON objects', () => {
+    expect(parsePayload('{"cwd":"/x","session_id":"s"}')).toEqual({ cwd: '/x', session_id: 's' });
   });
 });

@@ -43,7 +43,7 @@ export function parsePayload(raw: string): HookPayload {
   if (!raw.trim()) return {};
   try {
     const v = JSON.parse(raw) as unknown;
-    return typeof v === 'object' && v !== null ? (v as HookPayload) : {};
+    return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as HookPayload) : {};
   } catch {
     return {};
   }
