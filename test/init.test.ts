@@ -64,4 +64,17 @@ describe('initMemory', () => {
     const loggedOut = new FakeExec().on('git', ['rev-parse', '--is-inside-work-tree'], { code: 128 }).on('gh', ['auth', 'status'], { code: 1 });
     await expect(initMemory(loggedOut, home, {})).rejects.toThrow(/gh auth login/);
   });
+
+  it('warns instead of silently skipping when privacy cannot be verified', async () => {
+    const home = join(tmp.dir, 'home5');
+    const fake = new FakeExec().on('git', [], { code: 0 }).on('git', ['rev-parse', '--is-inside-work-tree'], { code: 128 });
+    const logs: string[] = [];
+    await initMemory(fake, home, { remote: 'https://github.com/acme/notes.git' }, (m) => logs.push(m));
+    expect(logs.some((m) => m.includes('could not verify'))).toBe(true);
+
+    const home2 = join(tmp.dir, 'home6');
+    const logs2: string[] = [];
+    await initMemory(fake, home2, { remote: '/srv/git/memory.git' }, (m) => logs2.push(m));
+    expect(logs2.some((m) => m.includes('could not verify'))).toBe(true);
+  });
 });

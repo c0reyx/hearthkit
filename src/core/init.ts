@@ -83,7 +83,7 @@ export async function initMemory(
     log(`${createdRepo ? 'Created' : 'Found'} ${nameWithOwner} and cloned it to ${memoryDir}`);
   }
 
-  await assertPrivate(exec, remote, opts.allowPublic === true);
+  await assertPrivate(exec, remote, opts.allowPublic === true, log);
   await ensureStructure(memoryDir);
 
   const git = (...args: string[]) => exec.run('git', args, { cwd: memoryDir, env });
@@ -98,12 +98,19 @@ export async function initMemory(
   return { memoryDir, remote, createdRepo, clonedNow, pushed: push.code === 0 };
 }
 
-async function assertPrivate(exec: Exec, remote: string, allowPublic: boolean): Promise<void> {
-  if (allowPublic || !/github\.com/i.test(remote)) return;
+async function assertPrivate(exec: Exec, remote: string, allowPublic: boolean, log: (msg: string) => void): Promise<void> {
+  if (allowPublic) return;
+  if (!/github\.com/i.test(remote)) {
+    log(`Warning: could not verify that ${remote} is private (not a GitHub remote). Check it yourself; hearth doctor will remind you.`);
+    return;
+  }
   const parsed = parseOwnerRepo(remote);
   if (!parsed) return;
   const r = await exec.run('gh', ['repo', 'view', `${parsed.owner}/${parsed.repo}`, '--json', 'visibility', '--jq', '.visibility']);
-  if (r.code !== 0) return; // gh missing or offline: cannot verify here; doctor will report
+  if (r.code !== 0) {
+    log(`Warning: could not verify that ${parsed.owner}/${parsed.repo} is private (GitHub CLI unavailable or offline). hearth doctor will check again.`);
+    return;
+  }
   const vis = r.stdout.trim().toUpperCase();
   if (vis && vis !== 'PRIVATE') {
     throw new HearthError(
