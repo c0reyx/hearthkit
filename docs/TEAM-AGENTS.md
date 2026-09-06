@@ -50,7 +50,7 @@ To install for everyone automatically, add to a project's `.claude/settings.json
 ```json
 {
   "extraKnownMarketplaces": { "opensense-agents": { "source": { "source": "github", "repo": "opensense/claude-agents" } } },
-  "enabledPlugins": { "support-triage@opensense-agents": true, "hearthkit@hearthkit": true }
+  "enabledPlugins": { "support-triage@opensense-agents": true, "hearth@hearthkit": true }
 }
 ```
 

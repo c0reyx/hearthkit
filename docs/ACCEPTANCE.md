@@ -11,7 +11,7 @@ Run this before every release tag. Automated tests prove the code; this proves t
 
 ## A1 Fresh install
 
-- [ ] In Claude Code: `/plugin marketplace add c0reyx/hearthkit` then `/plugin install hearthkit@hearthkit`, restart. (Or `claude --plugin-dir ~/Projects/hearthkit` for the working tree.)
+- [ ] In Claude Code: `/plugin marketplace add c0reyx/hearthkit` then `/plugin install hearth@hearthkit`, restart. (Or `claude --plugin-dir ~/Projects/hearthkit` for the working tree.)
 - [ ] Run `/hearth:setup`. Claude calls `hearth_doctor`, explains what is missing in plain words, and offers fixes as code blocks.
 - [ ] Choose "create for me". A private repo `hearth-memory` appears on GitHub. Claude asks two or three questions and saves them as global facts.
 - [ ] In a terminal, `hearth doctor` is all ✔ (gh may be `!` if you used a URL instead).

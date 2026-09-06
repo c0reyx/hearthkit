@@ -9,10 +9,10 @@ describe('plugin manifests', () => {
     const pkg = json('package.json');
     const plugin = json('.claude-plugin/plugin.json');
     const market = json('.claude-plugin/marketplace.json');
-    expect(plugin.name).toBe('hearthkit');
+    expect(plugin.name).toBe('hearth');
     expect(plugin.version).toBe(pkg.version);
     expect(market.name).toBe('hearthkit');
-    expect(market.plugins[0].name).toBe('hearthkit');
+    expect(market.plugins[0].name).toBe('hearth');
     expect(market.plugins[0].version).toBe(pkg.version);
 
     const hooks = json('hooks/hooks.json');

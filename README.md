@@ -25,7 +25,7 @@ Inside Claude Code:
 
 ```
 /plugin marketplace add c0reyx/hearthkit
-/plugin install hearthkit@hearthkit
+/plugin install hearth@hearthkit
 ```
 
 Restart Claude Code once, then run:
@@ -68,14 +68,17 @@ The same tool is available in a terminal after `npm install -g hearthkit`, or di
 
 | Path | What |
 |---|---|
-| `~/.hearth/config.json` | repo location, device name, context cap |
-| `~/.hearth/memory/` | your memory repo (a git clone) |
-| `~/.hearth/memory/global/` | global facts |
-| `~/.hearth/memory/projects/<slug>/` | project facts and `handoffs/` |
-| `~/.hearth/logs/hearth.log` | logs (no transcript text) |
-| `~/.claude/plugins/…/hearthkit/` | the plugin, including the bundled CLI |
+| `~/.hearth/config.json` | config: repo location, device name, context cap |
+| `~/.hearth/memory/` | memory repo (local clone); syncs with your remote |
+| `~/.hearth/memory/projects/<slug>/` | this project's layer: facts and `handoffs/` |
+| `~/.hearth/logs/hearth.log` | logs (hook, sync, MCP; no transcript text) |
+| `~/.claude/plugins/…/hearth/` | the plugin: bundled `dist/hearth.js` and `dist/mcp.js` |
+| `~/.claude/settings.json` | Claude Code: marketplace and plugin registration |
+| `~/.claude/plugins/` | Claude Code: installed plugin copies |
+| `~/.claude/projects/<folder-slug>/` | Claude Code transcripts for the current folder; read by handoff capture, never written |
+| the running `hearth` entry point | the CLI that is executing (npm global or the plugin's dist) |
 
-`hearth where` prints this with live values. Set `HEARTH_HOME` to move `~/.hearth`.
+`hearth where` prints this with live values. Set `HEARTH_HOME` to move `~/.hearth`. Global facts live in `~/.hearth/memory/global/`.
 
 ## Conflicts
 
@@ -87,7 +90,7 @@ The memory repo must be private; `hearth init` refuses a public GitHub repo. Aut
 
 ## Uninstall
 
-`/plugin uninstall hearthkit@hearthkit`, then delete `~/.hearth` if you want the local clone gone. Your memory repo on GitHub is untouched.
+`/plugin uninstall hearth@hearthkit`, then delete `~/.hearth` if you want the local clone gone. Your memory repo on GitHub is untouched.
 
 ## Roadmap
 

@@ -4,7 +4,7 @@
   "description": "hearthkit: git-synced memory and session handoffs for Claude Code",
   "plugins": [
     {
-      "name": "hearthkit",
+      "name": "hearth",
       "source": "./",
       "description": "Git-synced memory and session handoffs for Claude Code, on every machine.",
       "version": "0.1.0",

@@ -1,5 +1,5 @@
 {
-  "name": "hearthkit",
+  "name": "hearth",
   "version": "0.1.0",
   "description": "Git-synced memory and session handoffs for Claude Code, on every machine.",
   "author": { "name": "Corey Smith" },
