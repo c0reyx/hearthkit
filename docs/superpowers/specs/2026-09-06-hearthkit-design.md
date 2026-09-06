@@ -1,6 +1,6 @@
 # hearthkit — Design Spec (narrowed v1)
 
-**Date:** 2026-09-06 (revision 4, narrowed after landscape research)
+**Date:** 2026-09-06 (revision 5: narrowed v1 plus promote, store interface, acceptance protocol)
 **Status:** Draft for review
 **Working name:** `hearthkit`. A Claude Code plugin whose slash commands, hooks, and MCP server are all backed by one bundled CLI, `hearth`.
 
@@ -26,7 +26,7 @@ hearthkit is the missing continuity layer: memory and handoffs stored as markdow
 - Model profiles or local-model launching. Ollama speaks the Anthropic API natively (`ollama launch claude`), and claude-code-router and CCS already manage profiles. Documented, not built.
 - A web dashboard or shell installer. The plugin install and `/hearth:setup` are the setup path. A dashboard is v2, once there are users to design it for.
 - Semantic search. Keyword search over a small human-written corpus is enough for v1; embeddings return in v1.1 if search quality is actually a complaint.
-- A hosted service. Git is the sync. A hosted team layer is the potential paid product in §13, decided later.
+- A hosted service. Git is the sync. A hosted team layer is the potential paid product in §14, decided later.
 - Codex or other runtimes as first-class targets. The MCP server works from any MCP-capable tool today; generated config for them is v1.1.
 
 ## 3. Baseline requirements
@@ -85,9 +85,12 @@ For terminal use, `hearth` is also published to npm (`npm i -g hearthkit`) from 
 ```
 src/
   core/
+    store.ts      MemoryStore interface: list/read/write/delete facts and handoffs by layer.
+                  v1 ships one implementation, FileStore over ~/.hearth/memory. A hosted
+                  store in v2 implements the same interface; nothing above it changes.
     config.ts     ~/.hearth/config.json
     project.ts    project slug from git remote (owner/repo) or directory basename
-    memory.ts     fact files, MEMORY.md regeneration, session context builder
+    memory.ts     fact files, MEMORY.md regeneration, session context builder, promote
     handoff.ts    write; capture from transcript; select latest; prune
     search.ts     keyword search across layers and handoffs
     sync.ts       git pull --rebase / push with memory-specific conflict handling
@@ -100,7 +103,7 @@ src/
 test/             vitest; fakes for git.ts; local bare repos as remotes; fixture transcripts
 ```
 
-`cli/` and `mcp/` contain no business logic.
+`cli/` and `mcp/` contain no business logic. `memory.ts`, `handoff.ts`, and `search.ts` depend only on the `MemoryStore` interface, never on the filesystem directly; `sync.ts` is the one module that knows the store is a git clone.
 
 ### 4.5 Data flow
 
@@ -192,6 +195,7 @@ Conflicted facts appear in `hearth list` and `hearth doctor` until one copy is d
 | `hearth memory add <layer> "<text>" [--name] [--type] [--pin]` | `<layer>` is `global` or `project[:<slug>]`. |
 | `hearth memory search <query>` | §5.5. |
 | `hearth memory show <layer> <name>` | One fact. |
+| `hearth memory promote <name> [--from project[:<slug>]]` | Moves a fact from a project layer to `global`, keeping its history in git. Regenerates both indexes. |
 | `hearth memory context` | Session-start block for the current directory. Used by the hook. |
 | `hearth handoff write` | Interactive five-section handoff. |
 | `hearth handoff capture` | Reads hook JSON from stdin; §5.3 automatic path; then best-effort sync. Used by the hook. |
@@ -202,14 +206,14 @@ Exit codes: 0 ok, 1 user error, 2 environment error. Hook commands never block C
 
 ## 8. MCP tools
 
-`memory_search(query)`, `memory_list(layer)`, `memory_read(layer, name)`, `memory_write(layer, name?, type, text, pinned?)`, `memory_handoff(working_on, decisions?, open_threads?, next_steps?, files_touched?)`. Descriptions say when a fact belongs in `global` versus `project` and when to write a handoff. Any MCP-capable tool can use the server, which is how Codex reaches the same memory before v1.1.
+`memory_search(query)`, `memory_list(layer)`, `memory_read(layer, name)`, `memory_write(layer, name?, type, text, pinned?)`, `memory_handoff(working_on, decisions?, open_threads?, next_steps?, files_touched?)`, `memory_promote(name)`. Descriptions say when a fact belongs in `global` versus `project` (rule of thumb: if it would be true in a different repo, it is global), when to promote, and when to write a handoff. The memory-use skill repeats the rule so facts do not get stranded in a project. Any MCP-capable tool can use the server, which is how Codex reaches the same memory before v1.1.
 
 ## 9. Sharing and teams
 
 - **Installing hearthkit:** two commands from the public marketplace, then `/hearth:setup`. A team can add the marketplace and plugin to a project's `.claude/settings.json` so Claude Code installs it for everyone who opens that repo.
 - **Memory is per person.** Each teammate creates their own private memory repo during setup. Nothing personal is shared.
 - **Team agents** are a separate, ordinary Claude Code marketplace in a private repo. Teammates need read access and git credentials. hearthkit's docs include a template and explain that any agent installed alongside hearthkit gets memory and handoffs automatically, because the hooks are hearthkit's, not the agent's.
-- **Shared team memory** is not in v1. It is the natural paid feature (§13).
+- **Shared team memory** is not in v1. It is the natural paid feature (§14).
 
 ## 10. Stack, build, release
 
@@ -229,7 +233,26 @@ Exit codes: 0 ok, 1 user error, 2 environment error. Hook commands never block C
 
 Every feature is built test-first.
 
-## 12. Security
+## 12. Acceptance protocol (how Corey tests it by hand)
+
+Automated tests prove the code; this protocol proves the experience. Each scenario is a checklist in `docs/ACCEPTANCE.md`, run before every release tag. "Machine B" can be a second clone of the memory repo under a different `HOME` on the same Mac; the protocol shows how.
+
+| # | Scenario | Pass when |
+|---|---|---|
+| A1 | Fresh install: two `claude plugin` commands, then `/hearth:setup` | Setup finds what is missing, explains it plainly, creates a private repo, and writes a first global fact from a short conversation. `hearth doctor` is all green. |
+| A2 | Memory in session | Ask Claude to remember a preference. A fact file appears in `global/`. In a new session in a different folder, Claude already knows it without being asked. |
+| A3 | Project memory | In repo X, ask Claude to remember a fact about X. In repo Y it is not in context. Back in X it is. |
+| A4 | Agent-written handoff | Work on something, say "I'm stopping." A `source: agent` handoff appears. Open a new session in X: the first thing in context is that handoff. |
+| A5 | Automatic handoff | Work, then quit Claude Code without saying anything. A `source: auto` handoff appears containing only conversation text, no tool output. |
+| A6 | Two machines | Add a fact on A, `hearth sync`. On B, `hearth sync`, start a session: the fact is there. Repeat in reverse. Edit the same fact on both: after sync, both copies exist and `hearth doctor` names the conflict. |
+| A7 | Promote | A fact written to a project turns out to be general. `hearth memory promote <name>` moves it; it now loads in every repo. |
+| A8 | Offline and failures | Disconnect from the network, end a session: the handoff is still saved locally, no error appears in Claude Code, `hearth doctor` says sync is pending. Reconnect, sync, done. |
+| A9 | Where is everything | `hearth where` lists every path with a live value; open each one in Finder and confirm it matches. |
+| A10 | Another tool | Point Codex (or any MCP client) at `dist/mcp.js`. `memory_search` returns the same facts Claude Code sees. |
+
+Every scenario states the exact commands to type and what to look for, written for someone doing it the first time. When a scenario fails, it becomes a bug with the scenario number in the title.
+
+## 13. Security
 
 - Memory repo must be private; `hearth init` checks and refuses otherwise unless overridden.
 - No credentials stored. Git auth comes from the user's git or `gh` setup.
@@ -238,19 +261,19 @@ Every feature is built test-first.
 - Hook output is capped (§5.4).
 - Logs contain no transcript text.
 
-## 13. Phasing and the revenue question
+## 14. Phasing and the revenue question
 
-**v1 (this spec):** the plugin, two layers, handoffs, hooks, MCP, setup command, CLI, tests, docs including a team-agents template.
+**v1 (this spec):** the plugin, two layers, handoffs, promote, hooks, MCP, setup command, CLI, automated tests, the acceptance protocol, and docs: README for users, `docs/ACCEPTANCE.md`, and a team-agents template.
 
-**v1.1:** per-agent memory layer with `hearth new` scaffolding an agent plugin that declares its name to hearthkit; Codex CLI config generation; optional semantic search via a local embedding model; `hearth memory tidy`.
+**v1.1:** per-agent memory layer with `hearth new` scaffolding an agent plugin that declares its name to hearthkit; activity records (per-session history of what was done, from the same transcript capture that feeds handoffs); Codex CLI config generation; optional semantic search via a local embedding model; `hearth memory tidy`.
 
 **v1.2:** prompt library (`prompts/` in a marketplace repo, `/hearth:prompt`).
 
-**v2:** web dashboard with guided setup for people who will not use a terminal; team memory layer.
+**v2:** hosted store implementing `MemoryStore`; remote MCP server with per-user login so Claude.ai and ChatGPT on the web reach the same memory; web dashboard with guided setup for people who will not use a terminal; team memory layer.
 
 **Revenue path, decided later, not now.** The plugin stays free and open source; that is what earns adoption and is the honest comparison point against claude-mem and mem0, both of which run this model. The candidate paid product is a hosted "Hearth Hub": shared team memory, a web dashboard, and setup with no GitHub account, aimed at mixed technical and non-technical teams. The decision gate is real usage by Corey's own team on v1. Nothing in v1's design blocks that path: a hub is just another remote for the same files.
 
-## 14. Decisions resolved
+## 15. Decisions resolved
 
 - **Scope:** continuity only. Packaging, model profiles, and dashboards are commodity or premature; research on 2026-09-06 confirmed continuity across machines is the uncovered gap.
 - **Distribution:** the plugin carries its own CLI; no separate install step. Public one-plugin marketplace in the same repo.
@@ -259,3 +282,5 @@ Every feature is built test-first.
 - **Storage:** git-backed markdown, one fact per file, Claude Code compatible frontmatter.
 - **Sync trigger:** manual plus best-effort after session end.
 - **Language:** TypeScript on Node 20+, esbuild bundles committed on release tags.
+- **Store boundary:** a `MemoryStore` interface from day one, with a single file-based implementation, so the v2 hosted store reuses every line above it.
+- **Stranded facts:** solved by `promote` plus explicit guidance on the global-versus-project rule.
