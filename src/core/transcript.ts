@@ -20,6 +20,9 @@ const NOISE = [
   /<command-message>[\s\S]*?<\/command-message>/g,
   /<command-args>[\s\S]*?<\/command-args>/g,
   /<local-command-stdout>[\s\S]*?<\/local-command-stdout>/g,
+  /<local-command-stderr>[\s\S]*?<\/local-command-stderr>/g,
+  /<task-notification>[\s\S]*?<\/task-notification>/g,
+  /<task-progress>[\s\S]*?<\/task-progress>/g,
 ];
 
 export function stripNoise(text: string): string {
@@ -35,14 +38,18 @@ export function parseTranscript(jsonl: string): ParsedTranscript {
   let handoffToolCalled = false;
   for (const line of jsonl.split('\n')) {
     if (!line.trim()) continue;
-    let rec: { type?: unknown; isSidechain?: unknown; message?: { content?: unknown } };
+    let rec: { type?: unknown; isSidechain?: unknown; isMeta?: unknown; message?: { content?: unknown } };
     try {
       rec = JSON.parse(line) as typeof rec;
     } catch {
       continue;
     }
+    // A line can legally parse to null or a scalar; only objects carry a turn.
+    if (typeof rec !== 'object' || rec === null) continue;
     if (rec.type !== 'user' && rec.type !== 'assistant') continue;
     if (rec.isSidechain === true) continue;
+    // isMeta records are harness-injected text (skill bodies, hook output), not conversation.
+    if (rec.isMeta === true) continue;
     const content = rec.message?.content;
     let text = '';
     if (typeof content === 'string') {

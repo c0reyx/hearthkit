@@ -43,6 +43,22 @@ describe('captureHandoff', () => {
     expect(h).toBeNull();
   });
 
+  it('skips when the project already has an agent handoff less than ten minutes old', async () => {
+    const store = new FileStore(tmp.dir);
+    await writeHandoff(store, { slug: 'acme-crm', device: 'mac', source: 'agent', session: 's-agent', branch: '', workingOn: 'agent note', now: T1 });
+    const soon = await captureHandoff(
+      { session_id: 's-later', transcript_path: '/t.jsonl', cwd: '/repo' },
+      { store, exec: exec(), device: 'mac', readFile: fixture('normal'), now: new Date(T1.getTime() + 5 * 60_000) },
+    );
+    expect(soon).toBeNull();
+
+    const later = await captureHandoff(
+      { session_id: 's-later', transcript_path: '/t.jsonl', cwd: '/repo' },
+      { store, exec: exec(), device: 'mac', readFile: fixture('normal'), now: new Date(T1.getTime() + 30 * 60_000) },
+    );
+    expect(later?.source).toBe('auto');
+  });
+
   it('skips on missing path, unreadable file, or no text turns', async () => {
     const store = new FileStore(tmp.dir);
     expect(await captureHandoff({ cwd: '/repo' }, { store, exec: exec(), device: 'mac' })).toBeNull();

@@ -25,6 +25,16 @@ describe('handoffs', () => {
     expect(parseHandoff(h.id, serializeHandoff(h))).toEqual(h);
   });
 
+  it('keeps "## " lines inside a section body when they are not section titles', () => {
+    const h = {
+      id: '2026-09-06-1530-mac', device: 'mac', source: 'auto' as const, session: 'abc', branch: 'main',
+      timestamp: '2026-09-06T15:30:00.000Z',
+      workingOn: '**User:** here is my plan\n\n## Phase one\ndo the thing\n\n**Assistant:** sounds good',
+      decisions: '', openThreads: '', nextSteps: '', filesTouched: '',
+    };
+    expect(parseHandoff(h.id, serializeHandoff(h))).toEqual(h);
+  });
+
   it('writes, lists newest first, and avoids id collisions in the same minute', async () => {
     const store = new FileStore(tmp.dir);
     const a = await writeHandoff(store, { slug: 'acme', device: 'mac', source: 'agent', session: 's1', branch: 'main', workingOn: 'first', now: T1 });

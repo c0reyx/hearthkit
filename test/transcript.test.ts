@@ -22,6 +22,16 @@ describe('parseTranscript', () => {
   it('detects a memory_handoff tool call', () => {
     expect(parseTranscript(fixture('with-handoff')).handoffToolCalled).toBe(true);
   });
+  it('drops injected meta records, task notifications, and null lines', () => {
+    const { turns } = parseTranscript(fixture('injected'));
+    expect(turns).toEqual([
+      { role: 'user', text: 'Real question here.' },
+      { role: 'assistant', text: 'Real answer.' },
+    ]);
+    const joined = turns.map((t) => t.text).join('\n');
+    expect(joined).not.toContain('SKILL_BODY_MARKER');
+    expect(joined).not.toContain('TASK_OUTPUT_MARKER');
+  });
   it('skips unparseable lines', () => {
     expect(parseTranscript('not json\n{"type":"user","message":{"content":"ok"}}\n').turns).toEqual([{ role: 'user', text: 'ok' }]);
   });

@@ -1,0 +1,5 @@
+{"type":"user","isMeta":true,"isSidechain":false,"message":{"role":"user","content":"Base directory for this skill: /x\n\n# Some Skill\n\nSKILL_BODY_MARKER"}}
+{"type":"user","isSidechain":false,"message":{"role":"user","content":"<task-notification><summary>Background command done</summary><output-file>/tmp/TASK_OUTPUT_MARKER</output-file></task-notification>"}}
+{"type":"user","isSidechain":false,"message":{"role":"user","content":"Real question here."}}
+null
+{"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":[{"type":"text","text":"Real answer."}]}}

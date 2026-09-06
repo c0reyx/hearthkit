@@ -28,14 +28,18 @@ export function serializeHandoff(h: Handoff): string {
   });
 }
 
+const SECTION_TITLES = new Set(HANDOFF_SECTIONS.map(([, title]) => title));
+
 export function parseHandoff(id: string, raw: string): Handoff {
   const parsed = matter(raw);
   const d = parsed.data as Record<string, unknown>;
   const sections: Record<string, string> = {};
   let current: string | null = null;
   for (const line of parsed.content.split('\n')) {
+    // Only the five known titles start a new section; any other "## …" line is body text,
+    // because handoff bodies quote conversation that can contain its own markdown headings.
     const m = /^## (.+)$/.exec(line);
-    if (m && m[1] !== undefined) {
+    if (m && m[1] !== undefined && SECTION_TITLES.has(m[1].trim())) {
       current = m[1].trim();
       sections[current] = '';
       continue;

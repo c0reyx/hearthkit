@@ -7,6 +7,9 @@ import type { MemoryStore } from './store.js';
 import { type Handoff } from './types.js';
 import { parseTranscript, renderTurns, tailTurns } from './transcript.js';
 
+/** An agent handoff newer than this suppresses the automatic one for the same project. */
+const AGENT_HANDOFF_WINDOW_MS = 10 * 60_000;
+
 export interface HookPayload {
   session_id?: string;
   transcript_path?: string;
@@ -28,7 +31,16 @@ export async function captureHandoff(payload: HookPayload, deps: CaptureDeps): P
   const cwd = payload.cwd ?? process.cwd();
   const slug = await projectSlug(deps.exec, cwd);
   const session = payload.session_id ?? '';
-  if (session && (await listHandoffs(deps.store, slug)).some((h) => h.session === session)) return null;
+  const existing = await listHandoffs(deps.store, slug);
+  if (session && existing.some((h) => h.session === session)) return null;
+
+  // The agent may have written a handoff without the tool call this hook can see (e.g. via the
+  // CLI), and hook payloads do not always carry a session id. A fresh agent handoff wins.
+  const now = deps.now ?? new Date();
+  const newest = existing[0];
+  if (newest && newest.source === 'agent' && now.getTime() - Date.parse(newest.timestamp) < AGENT_HANDOFF_WINDOW_MS) {
+    return null;
+  }
 
   let jsonl: string;
   try {
