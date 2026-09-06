@@ -48,5 +48,7 @@ describe('FileStore', () => {
     const store = new FileStore(tmp.dir);
     await expect(store.writeFact(GLOBAL, '../escape', 'x')).rejects.toThrow(/Invalid name/);
     await expect(store.readHandoff('a/b', 'x')).rejects.toThrow(/Invalid name/);
+    await expect(store.writeFact(project('../escape'), 'x', 'y')).rejects.toThrow(/Invalid name/);
+    await expect(store.listFacts(project('a/b'))).rejects.toThrow(/Invalid name/);
   });
 });

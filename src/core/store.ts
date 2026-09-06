@@ -60,6 +60,9 @@ export class FileStore implements MemoryStore {
   constructor(readonly root: string) {}
 
   layerDir(layer: LayerRef): string {
+    if (layer.kind === 'project') {
+      assertSafeName(layer.slug);
+    }
     return join(this.root, layerId(layer));
   }
 
@@ -84,7 +87,7 @@ export class FileStore implements MemoryStore {
     return layers;
   }
 
-  listFacts(layer: LayerRef): Promise<string[]> {
+  async listFacts(layer: LayerRef): Promise<string[]> {
     return listMd(this.layerDir(layer));
   }
 
@@ -103,12 +106,12 @@ export class FileStore implements MemoryStore {
     return removeIfExists(join(this.layerDir(layer), `${name}.md`));
   }
 
-  readIndex(layer: LayerRef): Promise<string | null> {
+  async readIndex(layer: LayerRef): Promise<string | null> {
     return readOrNull(join(this.layerDir(layer), INDEX_FILE));
   }
 
-  writeIndex(layer: LayerRef, content: string): Promise<void> {
-    return writeEnsuring(join(this.layerDir(layer), INDEX_FILE), content);
+  async writeIndex(layer: LayerRef, content: string): Promise<void> {
+    await writeEnsuring(join(this.layerDir(layer), INDEX_FILE), content);
   }
 
   async listHandoffs(slug: string): Promise<string[]> {
