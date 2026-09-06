@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  deleteFact, listFacts, parseFact, readFact, regenerateIndex, renderIndex, serializeFact, writeFact,
+  deleteFact, listFacts, parseFact, promoteFact, readFact, regenerateIndex, renderIndex, serializeFact, writeFact,
 } from '../src/core/memory.js';
 import { FileStore } from '../src/core/store.js';
-import { GLOBAL, project } from '../src/core/types.js';
+import { GLOBAL, HearthError, project } from '../src/core/types.js';
 import { mkTmpDir } from './helpers/tmp.js';
 
 const NOW = new Date('2026-09-06T15:30:00Z');
@@ -84,5 +84,30 @@ describe('facts', () => {
   it('rejects empty text', async () => {
     const store = new FileStore(tmp.dir);
     await expect(writeFact(store, { layer: GLOBAL, text: '   ', device: 'mac' })).rejects.toThrow(/needs some text/);
+  });
+});
+
+describe('promoteFact', () => {
+  const tmp = mkTmpDir();
+  afterEach(() => tmp.cleanup());
+
+  it('moves a fact to global and regenerates both indexes', async () => {
+    const store = new FileStore(tmp.dir);
+    await writeFact(store, { layer: project('acme'), text: 'Corey is in Central Time.', name: 'timezone', type: 'user', device: 'mac', now: NOW });
+    const moved = await promoteFact(store, 'timezone', project('acme'));
+    expect(moved.name).toBe('timezone');
+    expect(await store.readFact(project('acme'), 'timezone')).toBeNull();
+    expect((await readFact(store, GLOBAL, 'timezone'))?.type).toBe('user');
+    expect(await store.readIndex(GLOBAL)).toContain('- timezone:');
+    expect(await store.readIndex(project('acme'))).not.toContain('- timezone:');
+  });
+
+  it('refuses when the name already exists in global, or the source is not a project', async () => {
+    const store = new FileStore(tmp.dir);
+    await writeFact(store, { layer: GLOBAL, text: 'g', name: 'dup', device: 'mac' });
+    await writeFact(store, { layer: project('acme'), text: 'p', name: 'dup', device: 'mac' });
+    await expect(promoteFact(store, 'dup', project('acme'))).rejects.toThrow(/already has a fact named "dup"/);
+    await expect(promoteFact(store, 'dup', GLOBAL)).rejects.toBeInstanceOf(HearthError);
+    await expect(promoteFact(store, 'missing', project('acme'))).rejects.toThrow(/No fact named "missing"/);
   });
 });

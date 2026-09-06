@@ -1,7 +1,7 @@
 import matter from 'gray-matter';
 import { slugify } from './slug.js';
 import type { MemoryStore } from './store.js';
-import { FACT_TYPES, HearthError, layerId, type Fact, type FactType, type LayerRef } from './types.js';
+import { FACT_TYPES, GLOBAL, HearthError, layerId, type Fact, type FactType, type LayerRef } from './types.js';
 
 export function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -111,4 +111,20 @@ export async function regenerateIndex(store: MemoryStore, layer: LayerRef): Prom
   const content = renderIndex(layer, await listFacts(store, layer));
   await store.writeIndex(layer, content);
   return content;
+}
+
+export async function promoteFact(store: MemoryStore, name: string, from: LayerRef): Promise<Fact> {
+  if (from.kind !== 'project') {
+    throw new HearthError('promote moves a fact from a project layer to global. Pass --from project or --from project:<slug>.');
+  }
+  const fact = await readFact(store, from, name);
+  if (!fact) throw new HearthError(`No fact named "${name}" in ${layerId(from)}.`);
+  if ((await store.readFact(GLOBAL, name)) !== null) {
+    throw new HearthError(`global already has a fact named "${name}". Compare them with: hearth memory show global ${name}`);
+  }
+  await store.writeFact(GLOBAL, name, serializeFact(fact));
+  await store.deleteFact(from, name);
+  await regenerateIndex(store, from);
+  await regenerateIndex(store, GLOBAL);
+  return fact;
 }
