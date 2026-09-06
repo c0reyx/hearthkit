@@ -1,0 +1,10 @@
+{
+  "name": "hearthkit",
+  "version": "0.1.0",
+  "description": "Git-synced memory and session handoffs for Claude Code, on every machine.",
+  "author": { "name": "Corey Smith" },
+  "homepage": "https://github.com/c0reyx/hearthkit",
+  "repository": "https://github.com/c0reyx/hearthkit",
+  "license": "MIT",
+  "keywords": ["memory", "handoff", "continuity", "sync", "git"]
+}
