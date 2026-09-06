@@ -7011,10 +7011,13 @@ var FACT_TYPES = ["user", "feedback", "project", "reference"];
 
 // src/core/config.ts
 function hearthHome(env = process.env) {
-  return env.HEARTH_HOME ?? join(homedir(), ".hearth");
+  return env.HEARTH_HOME || join(homedir(), ".hearth");
+}
+function deviceFromHostname(host) {
+  return slugify(host.replace(/\.(local|localdomain|lan)$/i, "")) || "device";
 }
 function defaultDevice() {
-  return slugify(hostname().replace(/\.local$/i, "")) || "device";
+  return deviceFromHostname(hostname());
 }
 function defaultConfig(home) {
   return { memoryDir: join(home, "memory"), device: defaultDevice(), contextCapTokens: 4e3, remote: null };
@@ -7112,6 +7115,7 @@ ${h[key].trim()}
     timestamp: h.timestamp
   });
 }
+var SECTION_TITLES = new Set(HANDOFF_SECTIONS.map(([, title]) => title));
 function parseHandoff(id, raw) {
   const parsed = (0, import_gray_matter.default)(raw);
   const d = parsed.data;
@@ -7119,7 +7123,7 @@ function parseHandoff(id, raw) {
   let current = null;
   for (const line of parsed.content.split("\n")) {
     const m = /^## (.+)$/.exec(line);
-    if (m && m[1] !== void 0) {
+    if (m && m[1] !== void 0 && SECTION_TITLES.has(m[1].trim())) {
       current = m[1].trim();
       sections[current] = "";
       continue;
@@ -7315,7 +7319,10 @@ var NOISE = [
   /<command-name>[\s\S]*?<\/command-name>/g,
   /<command-message>[\s\S]*?<\/command-message>/g,
   /<command-args>[\s\S]*?<\/command-args>/g,
-  /<local-command-stdout>[\s\S]*?<\/local-command-stdout>/g
+  /<local-command-stdout>[\s\S]*?<\/local-command-stdout>/g,
+  /<local-command-stderr>[\s\S]*?<\/local-command-stderr>/g,
+  /<task-notification>[\s\S]*?<\/task-notification>/g,
+  /<task-progress>[\s\S]*?<\/task-progress>/g
 ];
 function stripNoise(text) {
   return NOISE.reduce((t, re) => t.replace(re, ""), text);
@@ -7334,8 +7341,10 @@ function parseTranscript(jsonl) {
     } catch {
       continue;
     }
+    if (typeof rec !== "object" || rec === null) continue;
     if (rec.type !== "user" && rec.type !== "assistant") continue;
     if (rec.isSidechain === true) continue;
+    if (rec.isMeta === true) continue;
     const content = rec.message?.content;
     let text = "";
     if (typeof content === "string") {
@@ -7462,12 +7471,19 @@ async function projectSlug(exec, cwd) {
 }
 
 // src/core/capture.ts
+var AGENT_HANDOFF_WINDOW_MS = 10 * 6e4;
 async function captureHandoff(payload, deps) {
   if (!payload.transcript_path) return null;
   const cwd = payload.cwd ?? process.cwd();
   const slug = await projectSlug(deps.exec, cwd);
   const session = payload.session_id ?? "";
-  if (session && (await listHandoffs(deps.store, slug)).some((h) => h.session === session)) return null;
+  const existing = await listHandoffs(deps.store, slug);
+  if (session && existing.some((h) => h.session === session)) return null;
+  const now = deps.now ?? /* @__PURE__ */ new Date();
+  const newest = existing[0];
+  if (newest && newest.source === "agent" && now.getTime() - Date.parse(newest.timestamp) < AGENT_HANDOFF_WINDOW_MS) {
+    return null;
+  }
   let jsonl;
   try {
     jsonl = await (deps.readFile ?? ((p) => readFile2(p, "utf8")))(payload.transcript_path);
@@ -7654,7 +7670,9 @@ async function runDoctor(deps) {
   const ahead = await exec.run("git", ["rev-list", "--count", "@{u}..HEAD"], { cwd: cfg.memoryDir });
   const dirty = status.stdout.trim().length > 0;
   const unpushed = ahead.code === 0 ? Number(ahead.stdout.trim()) : 0;
-  if (dirty || unpushed > 0) {
+  if (ahead.code !== 0) {
+    checks.push(warn("pending", "unsynced changes", "no upstream branch is configured yet", "Run: hearth sync"));
+  } else if (dirty || unpushed > 0) {
     const parts = [dirty ? "uncommitted files" : "", unpushed > 0 ? `${unpushed} unpushed commit${unpushed === 1 ? "" : "s"}` : ""].filter(Boolean);
     checks.push(warn("pending", "unsynced changes", parts.join(" and "), "Run: hearth sync"));
   } else {
@@ -7758,7 +7776,10 @@ async function assertPrivate(exec, remote, allowPublic, log) {
     return;
   }
   const parsed = parseOwnerRepo(remote);
-  if (!parsed) return;
+  if (!parsed) {
+    log(`Warning: could not verify that ${remote} is private (unrecognised GitHub URL). Check it yourself; hearth doctor will remind you.`);
+    return;
+  }
   const r = await exec.run("gh", ["repo", "view", `${parsed.owner}/${parsed.repo}`, "--json", "visibility", "--jq", ".visibility"]);
   if (r.code !== 0) {
     log(`Warning: could not verify that ${parsed.owner}/${parsed.repo} is private (GitHub CLI unavailable or offline). hearth doctor will check again.`);
@@ -7856,7 +7877,7 @@ async function syncRepo(exec, store, opts) {
   const cwd = store.root;
   const now = opts.now ?? /* @__PURE__ */ new Date();
   const log = opts.log ?? (() => void 0);
-  const result = { committed: false, pulled: false, pushed: false, conflicts: [], pruned: [], error: null };
+  const result = { committed: false, pulled: false, pushed: false, conflicts: [], resolved: [], pruned: [], error: null };
   const git = (...args) => exec.run("git", args, { cwd, env: GIT_ENV });
   result.committed = await commitAll(git, `hearth: ${opts.device} ${now.toISOString()}`);
   const branch = await currentBranch(exec, cwd) ?? "main";
@@ -7876,21 +7897,27 @@ async function syncRepo(exec, store, opts) {
     }
     result.pulled = true;
   } else if (hasRemote && hasLocal) {
-    let r = await git("rebase", `origin/${branch}`);
-    for (let guard = 0; r.code !== 0 && guard < 100; guard++) {
-      const conflicted = (await git("diff", "--name-only", "--diff-filter=U")).stdout.split("\n").map((s) => s.trim()).filter(Boolean);
-      if (conflicted.length === 0) {
+    try {
+      let r = await git("rebase", `origin/${branch}`);
+      for (let guard = 0; r.code !== 0 && guard < 100; guard++) {
+        const conflicted = (await git("diff", "--name-only", "--diff-filter=U")).stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+        if (conflicted.length === 0) {
+          await git("rebase", "--abort");
+          result.error = `rebase failed: ${r.stderr.trim()}`;
+          return result;
+        }
+        for (const file of conflicted) await resolveConflict(git, cwd, file, opts.device, result);
+        await git("add", "-A");
+        r = await git("rebase", "--continue");
+      }
+      if (r.code !== 0) {
         await git("rebase", "--abort");
-        result.error = `rebase failed: ${r.stderr.trim()}`;
+        result.error = "rebase did not finish; local changes kept, nothing pushed";
         return result;
       }
-      for (const file of conflicted) await resolveConflict(git, cwd, file, opts.device, result);
-      await git("add", "-A");
-      r = await git("rebase", "--continue");
-    }
-    if (r.code !== 0) {
+    } catch (err) {
       await git("rebase", "--abort");
-      result.error = "rebase did not finish; local changes kept, nothing pushed";
+      result.error = `rebase failed: ${err instanceof Error ? err.message : String(err)}`;
       return result;
     }
     result.pulled = true;
@@ -7917,20 +7944,28 @@ async function commitAll(git, message) {
 }
 async function resolveConflict(git, cwd, file, device, result) {
   const base = basename2(file);
+  const upstream = await git("show", `:2:${file}`);
+  const local = await git("show", `:3:${file}`);
+  const editedOnBothSides = upstream.code === 0 && local.code === 0;
+  if (!editedOnBothSides) {
+    await keepSurvivingSide(git, file);
+    result.resolved.push(file);
+    return;
+  }
   if (base !== INDEX_FILE && base.endsWith(".md")) {
-    const local = await git("show", `:3:${file}`);
-    if (local.code === 0) {
-      const conflictName = `${base.slice(0, -3)}.conflict-${device}`;
-      const parsed = (0, import_gray_matter3.default)(local.stdout);
-      const rewritten = import_gray_matter3.default.stringify(`${parsed.content.trim()}
+    const conflictName = `${base.slice(0, -3)}.conflict-${device}`;
+    const parsed = (0, import_gray_matter3.default)(local.stdout);
+    const rewritten = import_gray_matter3.default.stringify(`${parsed.content.trim()}
 `, { ...parsed.data, name: conflictName });
-      const copy = join5(cwd, dirname2(file), `${conflictName}.md`);
-      await writeFile4(copy, rewritten, "utf8");
-    }
+    const copy = join5(cwd, dirname2(file), `${conflictName}.md`);
+    await writeFile4(copy, rewritten, "utf8");
     result.conflicts.push(file);
   }
-  const keepUpstream = await git("checkout", "--ours", "--", file);
-  if (keepUpstream.code !== 0) await git("checkout", "--theirs", "--", file);
+  await keepSurvivingSide(git, file);
+}
+async function keepSurvivingSide(git, file) {
+  const ours = await git("checkout", "--ours", "--", file);
+  if (ours.code !== 0) await git("checkout", "--theirs", "--", file);
 }
 
 // src/core/where.ts
@@ -8050,12 +8085,17 @@ Next: start a Claude Code session, or run: hearth doctor
     const { cfg, store } = await openStore(deps);
     const r = await syncRepo(deps.exec, store, { device: cfg.device, now: now() });
     if (r.error) {
+      await appendLog(deps.home, { command: "sync", error: r.error, committed: r.committed }).catch(() => void 0);
       throw new HearthError(`Sync incomplete: ${r.error}${r.committed ? "\nYour changes are committed locally and will push next time." : ""}`, 2);
     }
-    if (o.quiet) return;
+    if (o.quiet) {
+      await appendLog(deps.home, { command: "sync", pushed: r.pushed, pulled: r.pulled, conflicts: r.conflicts.length }).catch(() => void 0);
+      return;
+    }
     const bits = [r.committed ? "Committed local changes." : "", r.pulled ? "Pulled." : "", r.pushed ? "Pushed." : "Nothing to push."].filter(Boolean);
     const extra = [
       r.conflicts.length ? `Conflicts kept as extra copies: ${r.conflicts.join(", ")}. Run hearth doctor to review them.` : "",
+      r.resolved.length ? `Kept edited copies of facts deleted elsewhere: ${r.resolved.join(", ")}` : "",
       r.pruned.length ? `Pruned ${r.pruned.length} old handoff(s).` : ""
     ].filter(Boolean);
     out(`Synced. ${bits.join(" ")}${extra.length ? `

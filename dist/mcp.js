@@ -31253,10 +31253,13 @@ var FACT_TYPES = ["user", "feedback", "project", "reference"];
 
 // src/core/config.ts
 function hearthHome(env = process.env) {
-  return env.HEARTH_HOME ?? join(homedir(), ".hearth");
+  return env.HEARTH_HOME || join(homedir(), ".hearth");
+}
+function deviceFromHostname(host) {
+  return slugify2(host.replace(/\.(local|localdomain|lan)$/i, "")) || "device";
 }
 function defaultDevice() {
-  return slugify2(hostname3().replace(/\.local$/i, "")) || "device";
+  return deviceFromHostname(hostname3());
 }
 function defaultConfig(home) {
   return { memoryDir: join(home, "memory"), device: defaultDevice(), contextCapTokens: 4e3, remote: null };
@@ -39462,7 +39465,9 @@ async function runDoctor(deps) {
   const ahead = await exec.run("git", ["rev-list", "--count", "@{u}..HEAD"], { cwd: cfg.memoryDir });
   const dirty = status.stdout.trim().length > 0;
   const unpushed = ahead.code === 0 ? Number(ahead.stdout.trim()) : 0;
-  if (dirty || unpushed > 0) {
+  if (ahead.code !== 0) {
+    checks.push(warn("pending", "unsynced changes", "no upstream branch is configured yet", "Run: hearth sync"));
+  } else if (dirty || unpushed > 0) {
     const parts = [dirty ? "uncommitted files" : "", unpushed > 0 ? `${unpushed} unpushed commit${unpushed === 1 ? "" : "s"}` : ""].filter(Boolean);
     checks.push(warn("pending", "unsynced changes", parts.join(" and "), "Run: hearth sync"));
   } else {
@@ -39506,6 +39511,7 @@ ${h[key].trim()}
     timestamp: h.timestamp
   });
 }
+var SECTION_TITLES = new Set(HANDOFF_SECTIONS.map(([, title]) => title));
 function parseHandoff(id, raw) {
   const parsed = (0, import_gray_matter.default)(raw);
   const d = parsed.data;
@@ -39513,7 +39519,7 @@ function parseHandoff(id, raw) {
   let current = null;
   for (const line of parsed.content.split("\n")) {
     const m = /^## (.+)$/.exec(line);
-    if (m && m[1] !== void 0) {
+    if (m && m[1] !== void 0 && SECTION_TITLES.has(m[1].trim())) {
       current = m[1].trim();
       sections[current] = "";
       continue;
@@ -39666,7 +39672,10 @@ async function assertPrivate(exec, remote, allowPublic, log) {
     return;
   }
   const parsed = parseOwnerRepo(remote);
-  if (!parsed) return;
+  if (!parsed) {
+    log(`Warning: could not verify that ${remote} is private (unrecognised GitHub URL). Check it yourself; hearth doctor will remind you.`);
+    return;
+  }
   const r = await exec.run("gh", ["repo", "view", `${parsed.owner}/${parsed.repo}`, "--json", "visibility", "--jq", ".visibility"]);
   if (r.code !== 0) {
     log(`Warning: could not verify that ${parsed.owner}/${parsed.repo} is private (GitHub CLI unavailable or offline). hearth doctor will check again.`);
@@ -39864,7 +39873,7 @@ async function syncRepo(exec, store, opts) {
   const cwd = store.root;
   const now = opts.now ?? /* @__PURE__ */ new Date();
   const log = opts.log ?? (() => void 0);
-  const result = { committed: false, pulled: false, pushed: false, conflicts: [], pruned: [], error: null };
+  const result = { committed: false, pulled: false, pushed: false, conflicts: [], resolved: [], pruned: [], error: null };
   const git = (...args) => exec.run("git", args, { cwd, env: GIT_ENV });
   result.committed = await commitAll(git, `hearth: ${opts.device} ${now.toISOString()}`);
   const branch = await currentBranch(exec, cwd) ?? "main";
@@ -39884,21 +39893,27 @@ async function syncRepo(exec, store, opts) {
     }
     result.pulled = true;
   } else if (hasRemote && hasLocal) {
-    let r = await git("rebase", `origin/${branch}`);
-    for (let guard = 0; r.code !== 0 && guard < 100; guard++) {
-      const conflicted = (await git("diff", "--name-only", "--diff-filter=U")).stdout.split("\n").map((s) => s.trim()).filter(Boolean);
-      if (conflicted.length === 0) {
+    try {
+      let r = await git("rebase", `origin/${branch}`);
+      for (let guard = 0; r.code !== 0 && guard < 100; guard++) {
+        const conflicted = (await git("diff", "--name-only", "--diff-filter=U")).stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+        if (conflicted.length === 0) {
+          await git("rebase", "--abort");
+          result.error = `rebase failed: ${r.stderr.trim()}`;
+          return result;
+        }
+        for (const file2 of conflicted) await resolveConflict(git, cwd, file2, opts.device, result);
+        await git("add", "-A");
+        r = await git("rebase", "--continue");
+      }
+      if (r.code !== 0) {
         await git("rebase", "--abort");
-        result.error = `rebase failed: ${r.stderr.trim()}`;
+        result.error = "rebase did not finish; local changes kept, nothing pushed";
         return result;
       }
-      for (const file2 of conflicted) await resolveConflict(git, cwd, file2, opts.device, result);
-      await git("add", "-A");
-      r = await git("rebase", "--continue");
-    }
-    if (r.code !== 0) {
+    } catch (err) {
       await git("rebase", "--abort");
-      result.error = "rebase did not finish; local changes kept, nothing pushed";
+      result.error = `rebase failed: ${err instanceof Error ? err.message : String(err)}`;
       return result;
     }
     result.pulled = true;
@@ -39925,20 +39940,28 @@ async function commitAll(git, message) {
 }
 async function resolveConflict(git, cwd, file2, device, result) {
   const base = basename2(file2);
+  const upstream = await git("show", `:2:${file2}`);
+  const local = await git("show", `:3:${file2}`);
+  const editedOnBothSides = upstream.code === 0 && local.code === 0;
+  if (!editedOnBothSides) {
+    await keepSurvivingSide(git, file2);
+    result.resolved.push(file2);
+    return;
+  }
   if (base !== INDEX_FILE && base.endsWith(".md")) {
-    const local = await git("show", `:3:${file2}`);
-    if (local.code === 0) {
-      const conflictName = `${base.slice(0, -3)}.conflict-${device}`;
-      const parsed = (0, import_gray_matter3.default)(local.stdout);
-      const rewritten = import_gray_matter3.default.stringify(`${parsed.content.trim()}
+    const conflictName = `${base.slice(0, -3)}.conflict-${device}`;
+    const parsed = (0, import_gray_matter3.default)(local.stdout);
+    const rewritten = import_gray_matter3.default.stringify(`${parsed.content.trim()}
 `, { ...parsed.data, name: conflictName });
-      const copy = join4(cwd, dirname2(file2), `${conflictName}.md`);
-      await writeFile4(copy, rewritten, "utf8");
-    }
+    const copy = join4(cwd, dirname2(file2), `${conflictName}.md`);
+    await writeFile4(copy, rewritten, "utf8");
     result.conflicts.push(file2);
   }
-  const keepUpstream = await git("checkout", "--ours", "--", file2);
-  if (keepUpstream.code !== 0) await git("checkout", "--theirs", "--", file2);
+  await keepSurvivingSide(git, file2);
+}
+async function keepSurvivingSide(git, file2) {
+  const ours = await git("checkout", "--ours", "--", file2);
+  if (ours.code !== 0) await git("checkout", "--theirs", "--", file2);
 }
 
 // src/mcp/server.ts
