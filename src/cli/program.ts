@@ -1,10 +1,13 @@
 import { Command } from 'commander';
-import { requireConfig, type Config } from '../core/config.js';
+import { loadConfig, requireConfig, type Config } from '../core/config.js';
+import { buildContext } from '../core/context.js';
+import { captureHandoff, type HookPayload } from '../core/capture.js';
 import { doctorExitCode, renderChecks, runDoctor } from '../core/doctor.js';
 import type { Exec } from '../core/exec.js';
 import { currentBranch } from '../core/git.js';
 import { listHandoffs, writeHandoff } from '../core/handoff.js';
 import { initMemory } from '../core/init.js';
+import { appendLog } from '../core/log.js';
 import { deleteFact, listFacts, promoteFact, writeFact } from '../core/memory.js';
 import { projectSlug } from '../core/project.js';
 import { search } from '../core/search.js';
@@ -34,6 +37,25 @@ export async function resolveLayer(arg: string, deps: CliDeps): Promise<LayerRef
   if (arg === 'project') return project(await projectSlug(deps.exec, deps.cwd));
   if (arg.startsWith('project:')) return parseLayerId(`projects/${arg.slice('project:'.length)}`);
   return parseLayerId(arg);
+}
+
+export function parsePayload(raw: string): HookPayload {
+  if (!raw.trim()) return {};
+  try {
+    const v = JSON.parse(raw) as unknown;
+    return typeof v === 'object' && v !== null ? (v as HookPayload) : {};
+  } catch {
+    return {};
+  }
+}
+
+// Hook commands must never break a Claude Code session: swallow errors into the log and exit 0.
+async function hookSafe(deps: CliDeps, command: string, fn: () => Promise<void>): Promise<void> {
+  try {
+    await fn();
+  } catch (err) {
+    await appendLog(deps.home, { command, error: err instanceof Error ? err.message : String(err) }).catch(() => undefined);
+  }
 }
 
 function factType(v: string | undefined): FactType | undefined {
@@ -166,6 +188,22 @@ export function buildProgram(deps: CliDeps): Command {
       out(`Promoted ${name} from ${layerId(from)} to global.\n`);
     });
 
+  memory
+    .command('context')
+    .description('Print the session-start context block (used by the SessionStart hook; reads hook JSON on stdin)')
+    .action(() => hookSafe(deps, 'memory context', async () => {
+      const payload = parsePayload(await deps.readStdin());
+      const cwd = payload.cwd ?? deps.cwd;
+      const cfg = await loadConfig(deps.home);
+      if (!cfg) {
+        out('hearthkit is installed but not set up on this machine yet. Run /hearth:setup to connect your memory repo.\n');
+        return;
+      }
+      const store = new FileStore(cfg.memoryDir);
+      const slug = await projectSlug(deps.exec, cwd);
+      out(await buildContext({ store, slug, capTokens: cfg.contextCapTokens }));
+    }));
+
   const handoff = program.command('handoff').description('Project handoffs');
 
   handoff
@@ -199,6 +237,19 @@ export function buildProgram(deps: CliDeps): Command {
     if (!(await store.deleteHandoff(slug, id))) throw new HearthError(`No handoff ${id} in ${slug}.`);
     out(`Deleted handoff ${id}.\n`);
   });
+
+  handoff
+    .command('capture')
+    .description('Capture an automatic handoff from the SessionEnd hook payload on stdin, then sync in the background')
+    .action(() => hookSafe(deps, 'handoff capture', async () => {
+      const payload = parsePayload(await deps.readStdin());
+      const cfg = await loadConfig(deps.home);
+      if (!cfg) return;
+      const store = new FileStore(cfg.memoryDir);
+      const h = await captureHandoff(payload, { store, exec: deps.exec, device: cfg.device, now: now() });
+      await appendLog(deps.home, { command: 'handoff capture', session: payload.session_id ?? null, wrote: h?.id ?? null });
+      deps.spawnDetached(['sync', '--quiet']);
+    }));
 
   return program;
 }

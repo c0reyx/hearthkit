@@ -101,4 +101,29 @@ describe('hearth CLI (end to end against a local bare remote)', () => {
     expect(t.code).toBe(1);
     expect(t.stderr).toContain('Unknown type');
   });
+
+  it('memory context prints a setup hint when not configured, and the context block when configured', async () => {
+    const fresh = join(tmp.dir, 'fresh-home');
+    const hint = await hearth(['memory', 'context'], { home: fresh, input: JSON.stringify({ cwd: crm }) });
+    expect(hint.code).toBe(0);
+    expect(hint.stdout).toContain('/hearth:setup');
+    const ctx = await hearth(['memory', 'context'], { home, input: JSON.stringify({ cwd: crm, hook_event_name: 'SessionStart' }) });
+    expect(ctx.code).toBe(0);
+    expect(ctx.stdout.startsWith('# hearthkit memory')).toBe(true);
+    expect(ctx.stdout).toContain('Retry logic for 429s');
+    expect(ctx.stdout).toContain('"projects/acme-crm"');
+  });
+
+  it('handoff capture stores an automatic handoff from a transcript and never fails the hook', async () => {
+    const transcript = join(process.cwd(), 'test', 'fixtures', 'transcripts', 'normal.jsonl');
+    const r = await hearth(['handoff', 'capture'], { home, input: JSON.stringify({ session_id: 'sess-1', transcript_path: transcript, cwd: crm, hook_event_name: 'SessionEnd' }) });
+    expect(r.code).toBe(0);
+    const list = await hearth(['handoff', 'list'], { home, cwd: crm });
+    expect(list.stdout).toContain('auto');
+    expect(list.stdout).not.toContain('SECRET_FILE_CONTENTS');
+    const log = readFileSync(join(home, 'logs', 'hearth.log'), 'utf8');
+    expect(log).toContain('"command":"handoff capture"');
+    const bad = await hearth(['handoff', 'capture'], { home, input: 'not json at all' });
+    expect(bad.code).toBe(0);
+  });
 });
