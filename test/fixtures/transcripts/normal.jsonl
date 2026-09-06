@@ -1,0 +1,7 @@
+{"type":"user","isSidechain":false,"message":{"role":"user","content":"Let's fix the HubSpot import so it retries on 429."}}
+{"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":[{"type":"thinking","thinking":"private"},{"type":"text","text":"I'll add exponential backoff around the batch call."},{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"import.py"}}]}}
+{"type":"user","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"SECRET_FILE_CONTENTS"}]}}
+{"type":"assistant","isSidechain":true,"message":{"role":"assistant","content":[{"type":"text","text":"subagent chatter"}]}}
+{"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":[{"type":"text","text":"Done. Backoff added with 3 retries."}]}}
+{"type":"user","isSidechain":false,"message":{"role":"user","content":"<system-reminder>ignore me</system-reminder>Great, ship it."}}
+{"type":"queue-operation","op":"x"}

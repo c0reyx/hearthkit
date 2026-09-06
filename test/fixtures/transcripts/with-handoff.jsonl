@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":"I'm stopping for today."}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Writing a handoff."},{"type":"tool_use","id":"h1","name":"mcp__hearth__memory_handoff","input":{"working_on":"x"}}]}}
