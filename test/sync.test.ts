@@ -62,8 +62,30 @@ describe('syncRepo', () => {
     expect(await b.readFact(GLOBAL, 'shared.conflict-b')).toContain('B version');
     expect(await b.readIndex(GLOBAL)).toContain('(conflict copy)');
     expect(rb.pushed).toBe(true);
+    // No rebase may be left in progress and no file left half-merged.
+    expect(existsSync(join(b.root, '.git', 'rebase-merge'))).toBe(false);
+    expect(await git(b.root, 'status', '--porcelain')).toBe('');
     await syncRepo(exec, a, { device: 'a' });
     expect(existsSync(join(a.root, 'global', 'shared.conflict-b.md'))).toBe(true);
+  });
+
+  it('a fact deleted on one device and edited on another resolves to the surviving edit', async () => {
+    const { a, b } = await twoDevices();
+    await writeFact(a, { layer: GLOBAL, text: 'original', name: 'f', device: 'a' });
+    await syncRepo(exec, a, { device: 'a' });
+    await syncRepo(exec, b, { device: 'b' });
+    await a.deleteFact(GLOBAL, 'f');
+    await syncRepo(exec, a, { device: 'a' });
+    await writeFact(b, { layer: GLOBAL, text: 'B still wants this', name: 'f', device: 'b' });
+    const rb = await syncRepo(exec, b, { device: 'b' });
+    expect(rb.error).toBeNull();
+    expect(rb.conflicts).toEqual([]);
+    expect(rb.resolved).toEqual(['global/f.md']);
+    expect(await b.listFacts(GLOBAL)).toEqual(['f']);
+    expect(existsSync(join(b.root, 'global', 'f.conflict-b.md'))).toBe(false);
+    expect(await b.readFact(GLOBAL, 'f')).toContain('B still wants this');
+    await syncRepo(exec, a, { device: 'a' });
+    expect(await a.readFact(GLOBAL, 'f')).toContain('B still wants this');
   });
 
   it('keeps the local commit and reports an error when the remote is unreachable', async () => {
