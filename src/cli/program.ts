@@ -126,12 +126,18 @@ export function buildProgram(deps: CliDeps): Command {
       const { cfg, store } = await openStore(deps);
       const r = await syncRepo(deps.exec, store, { device: cfg.device, now: now() });
       if (r.error) {
+        // A background sync prints nowhere, so the log is the only record of a failure.
+        await appendLog(deps.home, { command: 'sync', error: r.error, committed: r.committed }).catch(() => undefined);
         throw new HearthError(`Sync incomplete: ${r.error}${r.committed ? '\nYour changes are committed locally and will push next time.' : ''}`, 2);
       }
-      if (o.quiet) return;
+      if (o.quiet) {
+        await appendLog(deps.home, { command: 'sync', pushed: r.pushed, pulled: r.pulled, conflicts: r.conflicts.length }).catch(() => undefined);
+        return;
+      }
       const bits = [r.committed ? 'Committed local changes.' : '', r.pulled ? 'Pulled.' : '', r.pushed ? 'Pushed.' : 'Nothing to push.'].filter(Boolean);
       const extra = [
         r.conflicts.length ? `Conflicts kept as extra copies: ${r.conflicts.join(', ')}. Run hearth doctor to review them.` : '',
+        r.resolved.length ? `Kept edited copies of facts deleted elsewhere: ${r.resolved.join(', ')}` : '',
         r.pruned.length ? `Pruned ${r.pruned.length} old handoff(s).` : '',
       ].filter(Boolean);
       out(`Synced. ${bits.join(' ')}${extra.length ? `\n${extra.join('\n')}` : ''}\n`);

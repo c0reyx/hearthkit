@@ -29,6 +29,7 @@ describe('hearth CLI (end to end against a local bare remote)', () => {
   const tmp = mkTmpDir();
   const home = join(tmp.dir, 'home');
   const crm = join(tmp.dir, 'crm');
+  const site = join(tmp.dir, 'site');
   let remote = '';
   const exec = new RealExec();
 
@@ -36,6 +37,8 @@ describe('hearth CLI (end to end against a local bare remote)', () => {
     remote = await makeBareRemote(tmp.dir);
     await exec.run('git', ['init', '-q', crm]);
     await exec.run('git', ['remote', 'add', 'origin', 'git@github.com:acme/crm.git'], { cwd: crm });
+    await exec.run('git', ['init', '-q', site]);
+    await exec.run('git', ['remote', 'add', 'origin', 'git@github.com:acme/site.git'], { cwd: site });
   });
   afterAll(() => tmp.cleanup());
 
@@ -85,6 +88,11 @@ describe('hearth CLI (end to end against a local bare remote)', () => {
     expect(s.stdout).toContain('Synced.');
     const log = await exec.run('git', ['log', '--oneline'], { cwd: remote });
     expect(log.stdout).toMatch(/hearth: /);
+    // A background (--quiet) sync prints nothing, so its outcome has to reach the log.
+    const q = await hearth(['sync', '--quiet'], { home });
+    expect(q.code, q.stderr).toBe(0);
+    expect(q.stdout).toBe('');
+    expect(readFileSync(join(home, 'logs', 'hearth.log'), 'utf8')).toContain('"command":"sync"');
     const d = await hearth(['doctor', '--offline', '--json'], { home });
     const checks = JSON.parse(d.stdout) as { id: string; status: string }[];
     const byId = Object.fromEntries(checks.map((c) => [c.id, c.status]));
@@ -117,15 +125,23 @@ describe('hearth CLI (end to end against a local bare remote)', () => {
 
   it('handoff capture stores an automatic handoff from a transcript and never fails the hook', async () => {
     const transcript = join(process.cwd(), 'test', 'fixtures', 'transcripts', 'normal.jsonl');
-    const r = await hearth(['handoff', 'capture'], { home, input: JSON.stringify({ session_id: 'sess-1', transcript_path: transcript, cwd: crm, hook_event_name: 'SessionEnd' }) });
+    const r = await hearth(['handoff', 'capture'], { home, input: JSON.stringify({ session_id: 'sess-1', transcript_path: transcript, cwd: site, hook_event_name: 'SessionEnd' }) });
     expect(r.code).toBe(0);
-    const list = await hearth(['handoff', 'list'], { home, cwd: crm });
+    const list = await hearth(['handoff', 'list'], { home, cwd: site });
     expect(list.stdout).toContain('auto');
     expect(list.stdout).not.toContain('SECRET_FILE_CONTENTS');
     const log = readFileSync(join(home, 'logs', 'hearth.log'), 'utf8');
     expect(log).toContain('"command":"handoff capture"');
     const bad = await hearth(['handoff', 'capture'], { home, input: 'not json at all' });
     expect(bad.code).toBe(0);
+  });
+
+  it('handoff capture defers to the agent handoff written for this project minutes ago', async () => {
+    const transcript = join(process.cwd(), 'test', 'fixtures', 'transcripts', 'normal.jsonl');
+    const r = await hearth(['handoff', 'capture'], { home, input: JSON.stringify({ session_id: 'sess-2', transcript_path: transcript, cwd: crm, hook_event_name: 'SessionEnd' }) });
+    expect(r.code).toBe(0);
+    const list = await hearth(['handoff', 'list'], { home, cwd: crm });
+    expect(list.stdout).not.toContain('auto');
   });
 });
 

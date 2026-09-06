@@ -46,6 +46,14 @@ describe('runDoctor', () => {
     expect(byId.gh).toMatchObject({ status: 'warn', fix: expect.stringContaining('brew install gh') });
   });
 
+  it('warns when there is no upstream branch instead of reporting nothing pending', async () => {
+    await saveConfig(tmp.dir, defaultConfig(tmp.dir));
+    const exec = healthyExec().on('git', ['rev-list', '--count'], { code: 128, stderr: 'fatal: no upstream configured' });
+    const checks = await runDoctor({ exec, home: tmp.dir, nodeVersion: 'v22.1.0', online: false });
+    const byId = Object.fromEntries(checks.map((c) => [c.id, c]));
+    expect(byId.pending).toMatchObject({ status: 'warn', detail: expect.stringContaining('no upstream'), fix: 'Run: hearth sync' });
+  });
+
   it('warns on unsynced changes and conflict copies; skips the network check offline', async () => {
     const cfg = defaultConfig(tmp.dir);
     await saveConfig(tmp.dir, cfg);

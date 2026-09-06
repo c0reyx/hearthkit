@@ -105,7 +105,10 @@ async function assertPrivate(exec: Exec, remote: string, allowPublic: boolean, l
     return;
   }
   const parsed = parseOwnerRepo(remote);
-  if (!parsed) return;
+  if (!parsed) {
+    log(`Warning: could not verify that ${remote} is private (unrecognised GitHub URL). Check it yourself; hearth doctor will remind you.`);
+    return;
+  }
   const r = await exec.run('gh', ['repo', 'view', `${parsed.owner}/${parsed.repo}`, '--json', 'visibility', '--jq', '.visibility']);
   if (r.code !== 0) {
     log(`Warning: could not verify that ${parsed.owner}/${parsed.repo} is private (GitHub CLI unavailable or offline). hearth doctor will check again.`);

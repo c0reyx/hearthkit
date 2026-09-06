@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { HearthError } from '../src/core/types.js';
-import { defaultConfig, hearthHome, loadConfig, requireConfig, saveConfig } from '../src/core/config.js';
+import { defaultConfig, deviceFromHostname, hearthHome, loadConfig, requireConfig, saveConfig } from '../src/core/config.js';
 import { mkTmpDir } from './helpers/tmp.js';
 
 describe('config', () => {
@@ -12,6 +12,14 @@ describe('config', () => {
   it('hearthHome honours HEARTH_HOME and defaults to ~/.hearth', () => {
     expect(hearthHome({ HEARTH_HOME: '/tmp/h' })).toBe('/tmp/h');
     expect(hearthHome({})).toMatch(/\.hearth$/);
+    expect(hearthHome({ HEARTH_HOME: '' })).toMatch(/\.hearth$/);
+  });
+
+  it('deviceFromHostname lowercases and drops local-network suffixes', () => {
+    expect(deviceFromHostname('MacBook-Air-2.localdomain')).toBe('macbook-air-2');
+    expect(deviceFromHostname('MacBook-Air-2.local')).toBe('macbook-air-2');
+    expect(deviceFromHostname('desk.lan')).toBe('desk');
+    expect(deviceFromHostname('')).toBe('device');
   });
 
   it('defaultConfig points memoryDir inside home with a 4000 token cap', () => {

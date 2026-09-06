@@ -12,11 +12,17 @@ export interface Config {
 }
 
 export function hearthHome(env: NodeJS.ProcessEnv = process.env): string {
-  return env.HEARTH_HOME ?? join(homedir(), '.hearth');
+  // `||`, not `??`: an empty HEARTH_HOME would otherwise resolve every path to the filesystem root.
+  return env.HEARTH_HOME || join(homedir(), '.hearth');
+}
+
+/** Turn a machine hostname into a device slug, dropping the suffixes local networks add. */
+export function deviceFromHostname(host: string): string {
+  return slugify(host.replace(/\.(local|localdomain|lan)$/i, '')) || 'device';
 }
 
 export function defaultDevice(): string {
-  return slugify(hostname().replace(/\.local$/i, '')) || 'device';
+  return deviceFromHostname(hostname());
 }
 
 export function defaultConfig(home: string): Config {

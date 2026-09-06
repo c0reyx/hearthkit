@@ -99,7 +99,10 @@ export async function runDoctor(deps: DoctorDeps): Promise<Check[]> {
   const ahead = await exec.run('git', ['rev-list', '--count', '@{u}..HEAD'], { cwd: cfg.memoryDir });
   const dirty = status.stdout.trim().length > 0;
   const unpushed = ahead.code === 0 ? Number(ahead.stdout.trim()) : 0;
-  if (dirty || unpushed > 0) {
+  if (ahead.code !== 0) {
+    // No upstream yet: git cannot count unpushed commits, so nothing here is provably synced.
+    checks.push(warn('pending', 'unsynced changes', 'no upstream branch is configured yet', 'Run: hearth sync'));
+  } else if (dirty || unpushed > 0) {
     const parts = [dirty ? 'uncommitted files' : '', unpushed > 0 ? `${unpushed} unpushed commit${unpushed === 1 ? '' : 's'}` : ''].filter(Boolean);
     checks.push(warn('pending', 'unsynced changes', parts.join(' and '), 'Run: hearth sync'));
   } else {

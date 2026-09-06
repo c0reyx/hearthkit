@@ -76,5 +76,10 @@ describe('initMemory', () => {
     const logs2: string[] = [];
     await initMemory(fake, home2, { remote: '/srv/git/memory.git' }, (m) => logs2.push(m));
     expect(logs2.some((m) => m.includes('could not verify'))).toBe(true);
+
+    const home3 = join(tmp.dir, 'home7');
+    const logs3: string[] = [];
+    await initMemory(fake, home3, { remote: 'https://github.com/not-a-repo' }, (m) => logs3.push(m));
+    expect(logs3.some((m) => m.includes('could not verify'))).toBe(true);
   });
 });
