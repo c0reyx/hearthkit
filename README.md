@@ -28,6 +28,8 @@ Inside Claude Code:
 /plugin install hearth@hearthkit
 ```
 
+Installs come from the tagged release the marketplace points at, so you get a tested build.
+
 Restart Claude Code once, then run:
 
 ```

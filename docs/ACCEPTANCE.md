@@ -58,7 +58,7 @@ Run this before every release tag. Automated tests prove the code; this proves t
 
 - [ ] Turn off Wi-Fi. In `~/tmp/repo-x`, chat briefly and quit. No error appears in Claude Code. `hearth handoff list` shows the new handoff. `hearth doctor --offline` shows `!` unsynced changes and the network check skipped.
 - [ ] Turn Wi-Fi on. `hearth sync` pushes. `hearth doctor` is green.
-- [ ] `echo 'garbage' | hearth handoff capture; echo $?` prints `0`, and the log has an error entry.
+- [ ] `echo 'garbage' | node ~/Projects/hearthkit/dist/hearth.js handoff capture; echo $?` prints `0`, and the newest log line is a normal `handoff capture` entry with `"wrote":null` (garbage input is treated as an empty payload, not an error).
 
 ## A9 Where is everything
 

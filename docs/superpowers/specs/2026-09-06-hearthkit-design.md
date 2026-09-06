@@ -182,8 +182,9 @@ Word and substring match across `name`, `description`, body, and handoff text, r
 
 1. `git fetch`; `git pull --rebase`.
 2. On conflict, per file: fact files keep both versions, the remote keeps the name and the local becomes `<name>.conflict-<device>.md` with its frontmatter `name` rewritten to match (otherwise the index would list a duplicate instead of a flagged copy); index files are regenerated; the rebase continues.
-3. `git push`.
-4. Prune old handoffs; commit if anything changed.
+3. Modify/delete conflicts resolve to one file: the surviving edit wins over the deletion, and `hearth sync` reports the kept files.
+4. `git push`.
+5. Prune old handoffs; commit if anything changed.
 
 Conflicted facts appear in `hearth list` and `hearth doctor` until one copy is deleted. The common cross-device case, both machines adding facts, never conflicts because files are unique.
 
@@ -206,7 +207,6 @@ Conflicted facts appear in `hearth list` and `hearth doctor` until one copy is d
 | `hearth handoff delete <id> [project]` | Deletes one handoff. |
 | `hearth handoff capture` | Reads hook JSON from stdin; §5.3 automatic path; then best-effort sync. Used by the hook. |
 | `hearth handoff list [project]` | Newest first. |
-| `hearth mcp` | Stdio MCP server. Used by `.mcp.json`. |
 
 Exit codes: 0 ok, 1 user error, 2 environment error. Hook commands never block Claude Code: they log to `~/.hearth/logs/` and exit 0.
 
@@ -225,7 +225,7 @@ Exit codes: 0 ok, 1 user error, 2 environment error. Hook commands never block C
 
 - TypeScript, ESM, Node 20+ at runtime. Deps: `commander`, `@modelcontextprotocol/sdk`, `gray-matter`, `zod`. Dev: `vitest`, `esbuild`, `typescript`, `tsx`, `@types/node`.
 - `git` and `gh` via subprocess behind `git.ts`. No git library.
-- `npm run build` bundles `dist/hearth.js` and `dist/mcp.js` with esbuild. `dist/` is committed only on release tags; `marketplace.json` pins the plugin `ref` to the latest tag so installs are reproducible. The same build publishes to npm.
+- `npm run build` bundles `dist/hearth.js` and `dist/mcp.js` with esbuild. `marketplace.json` points at the tagged release (`source: github`, `ref: v<version>`), so installs are reproducible. The release script commits `dist/` and the manifest in the `release: v<version>` commit, tags it, then untracks `dist/` again so the default branch stays bundle-free. Local development loads the plugin with `claude --plugin-dir` against a locally built `dist/`. The same build publishes to npm.
 
 ## 11. Testing
 
