@@ -14,17 +14,22 @@ describe('plugin manifests', () => {
     expect(market.name).toBe('hearthkit');
     expect(market.plugins[0].name).toBe('hearth');
     expect(market.plugins[0].version).toBe(pkg.version);
+    expect(market.plugins[0].source).toEqual({ source: 'github', repo: 'c0reyx/hearthkit', ref: 'v0.1.0' });
 
     const hooks = json('hooks/hooks.json');
     expect(hooks.hooks.SessionStart[0].hooks[0].command).toBe('node "${CLAUDE_PLUGIN_ROOT}/dist/hearth.js" memory context');
     expect(hooks.hooks.SessionEnd[0].hooks[0].command).toBe('node "${CLAUDE_PLUGIN_ROOT}/dist/hearth.js" handoff capture');
 
     const mcp = json('.mcp.json');
-    expect(mcp.hearth.command).toBe('node');
-    expect(mcp.hearth.args).toEqual(['${CLAUDE_PLUGIN_ROOT}/dist/mcp.js']);
+    expect(mcp.mcpServers.hearth.command).toBe('node');
+    expect(mcp.mcpServers.hearth.args).toEqual(['${CLAUDE_PLUGIN_ROOT}/dist/mcp.js']);
 
     expect(existsSync('dist/hearth.js')).toBe(true);
     expect(existsSync('dist/mcp.js')).toBe(true);
+  });
+
+  it('the release script bakes in no session trailer; release commits are the owner\'s', () => {
+    expect(read('scripts/release.mjs')).not.toContain('Claude-Session');
   });
 
   it('commands and the skill have frontmatter descriptions', () => {

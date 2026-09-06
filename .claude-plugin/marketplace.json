@@ -1,11 +1,17 @@
 {
   "name": "hearthkit",
-  "owner": { "name": "Corey Smith" },
+  "owner": {
+    "name": "Corey Smith"
+  },
   "description": "hearthkit: git-synced memory and session handoffs for Claude Code",
   "plugins": [
     {
       "name": "hearth",
-      "source": "./",
+      "source": {
+        "source": "github",
+        "repo": "c0reyx/hearthkit",
+        "ref": "v0.1.0"
+      },
       "description": "Git-synced memory and session handoffs for Claude Code, on every machine.",
       "version": "0.1.0",
       "category": "productivity"
