@@ -1,6 +1,6 @@
 # hearthkit — Design Spec (narrowed v1)
 
-**Date:** 2026-09-06 (revision 5: narrowed v1 plus promote, store interface, acceptance protocol)
+**Date:** 2026-09-06 (revision 6: aligned with the implementation plan)
 **Status:** Draft for review
 **Working name:** `hearthkit`. A Claude Code plugin whose slash commands, hooks, and MCP server are all backed by one bundled CLI, `hearth`.
 
@@ -71,8 +71,8 @@ Hooks and the MCP server invoke code inside the plugin directory via `${CLAUDE_P
 hooks/hooks.json     SessionStart → node ${CLAUDE_PLUGIN_ROOT}/dist/hearth.js memory context
                      SessionEnd   → node ${CLAUDE_PLUGIN_ROOT}/dist/hearth.js handoff capture
 .mcp.json            hearth → node ${CLAUDE_PLUGIN_ROOT}/dist/mcp.js
-commands/setup.md    /hearth:setup — instructs the agent to run `hearth doctor --json` and guide the user
-commands/sync.md     /hearth:sync
+commands/setup.md    /hearth:setup — the agent calls the hearth_doctor and hearth_init MCP tools and guides the user
+commands/sync.md     /hearth:sync — the agent calls the hearth_sync MCP tool
 commands/handoff.md  /hearth:handoff — asks the agent to write a handoff now
 skills/memory-use/   when and how to write facts and handoffs (loaded on demand)
 dist/                esbuild bundles, committed on release tags; no npm install at install time
@@ -92,12 +92,15 @@ src/
     project.ts    project slug from git remote (owner/repo) or directory basename
     memory.ts     fact files, MEMORY.md regeneration, session context builder, promote
     handoff.ts    write; capture from transcript; select latest; prune
+    transcript.ts parse Claude Code .jsonl into text-only turns; detect memory_handoff calls
+    context.ts    session-start context builder (handoff first, capped)
     search.ts     keyword search across layers and handoffs
     sync.ts       git pull --rebase / push with memory-specific conflict handling
     doctor.ts     baseline checks with plain-language fixes; --json for the setup command
     where.ts      §4.2 with live values
-    git.ts        interface + real impl for `git` and `gh`
-    transcript.ts parse Claude Code .jsonl, extract user/assistant text turns
+    exec.ts       Exec interface: RealExec (child_process) and FakeExec (tests)
+    git.ts        remoteUrl, currentBranch, isGitRepo, parseOwnerRepo over Exec
+    log.ts        ~/.hearth/logs/hearth.log, rotated at 1 MB
   cli/            commander commands; thin
   mcp/            MCP stdio server; thin
 test/             vitest; fakes for git.ts; local bare repos as remotes; fixture transcripts
@@ -111,7 +114,7 @@ test/             vitest; fakes for git.ts; local bare repos as remotes; fixture
 - **Session starts:** SessionStart hook → `hearth memory context` → prints latest project handoff, `global/MEMORY.md`, `projects/<slug>/MEMORY.md`, pinned facts, and a two-line reminder of the tools → Claude Code injects it.
 - **During the session:** MCP tools `memory_search`, `memory_read`, `memory_write`, `memory_list`, `memory_handoff`.
 - **Session ends:** SessionEnd hook → `hearth handoff capture` (hook JSON on stdin, includes `transcript_path`, `session_id`, `cwd`) → if no agent-written handoff exists for this session, store an automatic one from the transcript tail.
-- **Sync:** `hearth sync` or `/hearth:sync`. Also run automatically, best-effort and non-blocking, at the end of `handoff capture`, so a closed laptop has usually pushed before you open the other one. Failures are logged, never surfaced into the session.
+- **Sync:** `hearth sync` or `/hearth:sync`. Also run automatically, best-effort and non-blocking, at the end of `handoff capture` (a detached `hearth sync --quiet`; `HEARTH_NO_BACKGROUND_SYNC=1` disables it, which the tests use), so a closed laptop has usually pushed before you open the other one. Failures are logged, never surfaced into the session.
 
 ## 5. Memory model
 
@@ -162,7 +165,7 @@ branch: main
 ```
 
 - **Agent-written** via `memory_handoff` or `/hearth:handoff`. The memory-use skill asks the agent to do this before finishing a task or when the user says they are stopping.
-- **Automatic** from the transcript: last 30 user and assistant text turns, tool calls and tool results excluded, capped at 1,500 tokens, placed under `## Working on`. Only when no agent-written handoff exists for the session.
+- **Automatic** from the transcript: last 30 user and assistant text turns, tool calls and tool results excluded, capped at 1,500 tokens, placed under `## Working on`. Skipped when a handoff already exists for the session id, or when the transcript shows the agent called `memory_handoff` (the MCP server does not know the session id, so agent-written handoffs carry an empty `session`).
 
 Session start loads the latest handoff in full, preferring agent-written over automatic from the same session. Handoffs older than 30 days, except the newest per project, are pruned during sync. Time-and-device filenames mean two machines never conflict on a handoff.
 
@@ -195,9 +198,11 @@ Conflicted facts appear in `hearth list` and `hearth doctor` until one copy is d
 | `hearth memory add <layer> "<text>" [--name] [--type] [--pin]` | `<layer>` is `global` or `project[:<slug>]`. |
 | `hearth memory search <query>` | §5.5. |
 | `hearth memory show <layer> <name>` | One fact. |
+| `hearth memory delete <layer> <name>` | Deletes one fact; used to clear conflict copies. |
 | `hearth memory promote <name> [--from project[:<slug>]]` | Moves a fact from a project layer to `global`, keeping its history in git. Regenerates both indexes. |
 | `hearth memory context` | Session-start block for the current directory. Used by the hook. |
-| `hearth handoff write` | Interactive five-section handoff. |
+| `hearth handoff write --working-on <text> [--decisions] [--open-threads] [--next-steps] [--files-touched]` | Writes an agent-style handoff from flags (interactive prompts deferred to v1.1). |
+| `hearth handoff delete <id> [project]` | Deletes one handoff. |
 | `hearth handoff capture` | Reads hook JSON from stdin; §5.3 automatic path; then best-effort sync. Used by the hook. |
 | `hearth handoff list [project]` | Newest first. |
 | `hearth mcp` | Stdio MCP server. Used by `.mcp.json`. |
@@ -206,7 +211,7 @@ Exit codes: 0 ok, 1 user error, 2 environment error. Hook commands never block C
 
 ## 8. MCP tools
 
-`memory_search(query)`, `memory_list(layer)`, `memory_read(layer, name)`, `memory_write(layer, name?, type, text, pinned?)`, `memory_handoff(working_on, decisions?, open_threads?, next_steps?, files_touched?)`, `memory_promote(name)`. Descriptions say when a fact belongs in `global` versus `project` (rule of thumb: if it would be true in a different repo, it is global), when to promote, and when to write a handoff. The memory-use skill repeats the rule so facts do not get stranded in a project. Any MCP-capable tool can use the server, which is how Codex reaches the same memory before v1.1.
+`memory_search(query)`, `memory_list(layer)`, `memory_read(layer, name)`, `memory_write(layer, name?, type, text, pinned?)`, `memory_handoff(working_on, decisions?, open_threads?, next_steps?, files_touched?)`, `memory_promote(name, from_project?)`, plus three setup tools used by the slash commands so they never depend on shell path expansion inside command markdown: `hearth_doctor()`, `hearth_init(remote?, allow_public?)`, `hearth_sync()`. Descriptions say when a fact belongs in `global` versus `project` (rule of thumb: if it would be true in a different repo, it is global), when to promote, and when to write a handoff. The memory-use skill repeats the rule so facts do not get stranded in a project. Any MCP-capable tool can use the server, which is how Codex reaches the same memory before v1.1.
 
 ## 9. Sharing and teams
 
