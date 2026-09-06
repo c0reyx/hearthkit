@@ -1,8 +1,8 @@
 # hearthkit — Design Spec (narrowed v1)
 
-**Date:** 2026-09-06 (revision 6: aligned with the implementation plan)
+**Date:** 2026-09-06 (revision 7: aligned with the v0.1.0 implementation)
 **Status:** Draft for review
-**Working name:** `hearthkit`. A Claude Code plugin whose slash commands, hooks, and MCP server are all backed by one bundled CLI, `hearth`.
+**Working name:** `hearthkit` is the repo, npm package, and marketplace; the plugin inside it is named `hearth`, so its slash commands are `/hearth:setup`, `/hearth:sync`, `/hearth:handoff`. One bundled CLI, `hearth`, backs the hooks, the MCP server, and the terminal.
 
 ## 1. Problem
 
@@ -46,7 +46,7 @@ Nothing else. No Python, no Docker, no API keys, no local model.
 
 | Repo | Visibility | Contents |
 |---|---|---|
-| `<corey>/hearthkit` | public | The plugin: `.claude-plugin/plugin.json`, `hooks/`, `.mcp.json`, `skills/` (setup and memory-use guidance), `commands/`, bundled `dist/`, source, tests, docs. Also a one-plugin marketplace (`.claude-plugin/marketplace.json`) pointing at itself, so `claude plugin marketplace add <corey>/hearthkit` works. |
+| `<corey>/hearthkit` | public | The plugin `hearth`: `.claude-plugin/plugin.json`, `hooks/`, `.mcp.json`, `skills/memory-use/`, `commands/`, bundled `dist/` (committed on release tags), source, tests, docs. Also the one-plugin marketplace `hearthkit` (`.claude-plugin/marketplace.json`, `source: "./"`), so `claude plugin marketplace add <corey>/hearthkit` then `claude plugin install hearth@hearthkit` works. |
 | `<user>/hearth-memory` | private, one per person | `global/`, `projects/<slug>/`, handoffs. Created or connected by `/hearth:setup`. |
 | `<team>/agents` (optional, not built by v1) | private, shared | A normal Claude Code marketplace of team agent plugins. hearthkit's docs explain how to make one and how its agents pick up hearthkit memory. |
 
@@ -54,7 +54,7 @@ Nothing else. No Python, no Docker, no API keys, no local model.
 
 | Path | What | Owned by |
 |---|---|---|
-| `~/.claude/plugins/…/hearthkit/` | the installed plugin, including `dist/hearth.js` and `dist/mcp.js` | Claude Code |
+| `~/.claude/plugins/…/hearth/` | the installed plugin, including `dist/hearth.js` and `dist/mcp.js` | Claude Code |
 | `~/.hearth/config.json` | memory repo location, device name, context cap | hearthkit |
 | `~/.hearth/memory/` | local clone of the memory repo | hearthkit (git) |
 | `~/.hearth/logs/` | hook, sync, and MCP logs, rotated | hearthkit |
@@ -91,7 +91,8 @@ src/
     config.ts     ~/.hearth/config.json
     project.ts    project slug from git remote (owner/repo) or directory basename
     memory.ts     fact files, MEMORY.md regeneration, session context builder, promote
-    handoff.ts    write; capture from transcript; select latest; prune
+    handoff.ts    write; parse/serialize; select latest; prune (MemoryStore only)
+    capture.ts    captureHandoff for the SessionEnd hook: transcript + project slug + branch → handoff.ts
     transcript.ts parse Claude Code .jsonl into text-only turns; detect memory_handoff calls
     context.ts    session-start context builder (handoff first, capped)
     search.ts     keyword search across layers and handoffs
@@ -110,7 +111,7 @@ test/             vitest; fakes for git.ts; local bare repos as remotes; fixture
 
 ### 4.5 Data flow
 
-- **Install:** `claude plugin marketplace add <corey>/hearthkit` → `claude plugin install hearthkit@hearthkit`. The user types `/hearth:setup`. The agent runs `hearth doctor --json`, explains what is missing, and, with the user's confirmation, runs `hearth init` (creates a private GitHub repo via `gh` if available, or connects a pasted remote URL), then commits an initial `global/` fact about the user from a short conversation.
+- **Install:** `claude plugin marketplace add <corey>/hearthkit` → `claude plugin install hearth@hearthkit`. The user types `/hearth:setup`. The agent runs `hearth doctor --json`, explains what is missing, and, with the user's confirmation, runs `hearth init` (creates a private GitHub repo via `gh` if available, or connects a pasted remote URL), then commits an initial `global/` fact about the user from a short conversation.
 - **Session starts:** SessionStart hook → `hearth memory context` → prints latest project handoff, `global/MEMORY.md`, `projects/<slug>/MEMORY.md`, pinned facts, and a two-line reminder of the tools → Claude Code injects it.
 - **During the session:** MCP tools `memory_search`, `memory_read`, `memory_write`, `memory_list`, `memory_handoff`.
 - **Session ends:** SessionEnd hook → `hearth handoff capture` (hook JSON on stdin, includes `transcript_path`, `session_id`, `cwd`) → if no agent-written handoff exists for this session, store an automatic one from the transcript tail.
@@ -180,7 +181,7 @@ Word and substring match across `name`, `description`, body, and handoff text, r
 ## 6. Sync and conflicts
 
 1. `git fetch`; `git pull --rebase`.
-2. On conflict, per file: fact files keep both versions, the remote keeps the name and the local becomes `<name>.conflict-<device>.md`; index files are regenerated; the rebase continues.
+2. On conflict, per file: fact files keep both versions, the remote keeps the name and the local becomes `<name>.conflict-<device>.md` with its frontmatter `name` rewritten to match (otherwise the index would list a duplicate instead of a flagged copy); index files are regenerated; the rebase continues.
 3. `git push`.
 4. Prune old handoffs; commit if anything changed.
 
@@ -190,8 +191,8 @@ Conflicted facts appear in `hearth list` and `hearth doctor` until one copy is d
 
 | Command | Behaviour |
 |---|---|
-| `hearth init [--remote <url>]` | Creates config and the memory clone. With `gh` and no `--remote`, creates a private GitHub repo. Idempotent. Refuses a public remote unless `--allow-public`. |
-| `hearth doctor [--json]` | Baseline checks (§3) plus repo health and conflicts. Every failure prints the fix. `--json` is for `/hearth:setup`. |
+| `hearth init [--remote <url>] [--allow-public] [--repo-name <name>]` | Creates config and the memory clone. With `gh` and no `--remote`, creates a private GitHub repo. Idempotent. Refuses a public GitHub remote unless `--allow-public`; when privacy cannot be verified (no `gh`, offline, non-GitHub remote) it warns and doctor re-checks. |
+| `hearth doctor [--json] [--offline]` | Baseline checks (§3) plus repo health, a GitHub visibility check (skipped with a reason when it cannot be verified), unsynced changes, and conflict copies. Every failure prints the fix. `--json` is for `/hearth:setup`. |
 | `hearth where` | §4.2 with live values and the project slug. |
 | `hearth sync` | §6. |
 | `hearth list` | Layers, fact counts, handoff counts, conflicts. |
@@ -215,7 +216,7 @@ Exit codes: 0 ok, 1 user error, 2 environment error. Hook commands never block C
 
 ## 9. Sharing and teams
 
-- **Installing hearthkit:** two commands from the public marketplace, then `/hearth:setup`. A team can add the marketplace and plugin to a project's `.claude/settings.json` so Claude Code installs it for everyone who opens that repo.
+- **Installing hearthkit:** two commands from the public marketplace (`marketplace add c0reyx/hearthkit`, `install hearth@hearthkit`), then `/hearth:setup`. A team can add the marketplace and plugin to a project's `.claude/settings.json` so Claude Code installs it for everyone who opens that repo.
 - **Memory is per person.** Each teammate creates their own private memory repo during setup. Nothing personal is shared.
 - **Team agents** are a separate, ordinary Claude Code marketplace in a private repo. Teammates need read access and git credentials. hearthkit's docs include a template and explain that any agent installed alongside hearthkit gets memory and handoffs automatically, because the hooks are hearthkit's, not the agent's.
 - **Shared team memory** is not in v1. It is the natural paid feature (§14).
