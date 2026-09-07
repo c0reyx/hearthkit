@@ -14,7 +14,7 @@ describe('plugin manifests', () => {
     expect(market.name).toBe('hearthkit');
     expect(market.plugins[0].name).toBe('hearth');
     expect(market.plugins[0].version).toBe(pkg.version);
-    expect(market.plugins[0].source).toEqual({ source: 'github', repo: 'c0reyx/hearthkit', ref: 'v0.1.0' });
+    expect(market.plugins[0].source).toEqual({ source: 'url', url: 'https://github.com/c0reyx/hearthkit.git', ref: 'v0.1.0' });
 
     const hooks = json('hooks/hooks.json');
     expect(hooks.hooks.SessionStart[0].hooks[0].command).toBe('node "${CLAUDE_PLUGIN_ROOT}/dist/hearth.js" memory context');

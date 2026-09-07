@@ -225,7 +225,7 @@ Exit codes: 0 ok, 1 user error, 2 environment error. Hook commands never block C
 
 - TypeScript, ESM, Node 20+ at runtime. Deps: `commander`, `@modelcontextprotocol/sdk`, `gray-matter`, `zod`. Dev: `vitest`, `esbuild`, `typescript`, `tsx`, `@types/node`.
 - `git` and `gh` via subprocess behind `git.ts`. No git library.
-- `npm run build` bundles `dist/hearth.js` and `dist/mcp.js` with esbuild. `marketplace.json` points at the tagged release (`source: github`, `ref: v<version>`), so installs are reproducible. The release script commits `dist/` and the manifest in the `release: v<version>` commit, tags it, then untracks `dist/` again so the default branch stays bundle-free. Local development loads the plugin with `claude --plugin-dir` against a locally built `dist/`. The same build publishes to npm.
+- `npm run build` bundles `dist/hearth.js` and `dist/mcp.js` with esbuild. `marketplace.json` points at the tagged release (`source: url` with the HTTPS clone URL and `ref: v<version>`; an HTTPS URL is used because Claude Code fetches `github`-type sources over SSH, which many users have not set up), so installs are reproducible. The release script commits `dist/` and the manifest in the `release: v<version>` commit, tags it, then untracks `dist/` again so the default branch stays bundle-free. Local development loads the plugin with `claude --plugin-dir` against a locally built `dist/`. The same build publishes to npm.
 
 ## 11. Testing
 

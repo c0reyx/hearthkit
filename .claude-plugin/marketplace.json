@@ -8,8 +8,8 @@
     {
       "name": "hearth",
       "source": {
-        "source": "github",
-        "repo": "c0reyx/hearthkit",
+        "source": "url",
+        "url": "https://github.com/c0reyx/hearthkit.git",
         "ref": "v0.1.0"
       },
       "description": "Git-synced memory and session handoffs for Claude Code, on every machine.",
