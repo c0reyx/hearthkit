@@ -94,6 +94,10 @@ The memory repo must be private; `hearth init` refuses a public GitHub repo. Aut
 
 `/plugin uninstall hearth@hearthkit`, then delete `~/.hearth` if you want the local clone gone. Your memory repo on GitHub is untouched.
 
+## Developing hearthkit itself
+
+When you run Claude Code inside this repo, Claude Code also reads the repo's own `.mcp.json` as a project config, where `${CLAUDE_PLUGIN_ROOT}` is not set, so that copy of the `hearth` server cannot start. The committed `.claude/settings.json` disables that duplicate; the plugin's own server (loaded with `claude --plugin-dir .`) still works. This only affects this folder.
+
 ## Roadmap
 
 v1.1: per-agent memory, activity history, Codex CLI support, optional semantic search. v1.2: prompt library. v2: hosted team hub with a web dashboard and remote MCP for Claude.ai and ChatGPT.
