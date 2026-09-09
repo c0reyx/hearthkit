@@ -40,16 +40,26 @@ export function createMcpServer(deps: McpDeps): McpServer {
 
   const open = async () => {
     const cfg = await requireConfig(deps.home);
-    const ref = await resolveProject({ exec: deps.exec, home: deps.home, cwd: deps.cwd, now: deps.now?.() });
+    const ref = await resolveProject({ exec: deps.exec, home: deps.home, cwd: deps.cwd, memoryDir: cfg.memoryDir, now: deps.now?.() });
     return { cfg, store: new FileStore(cfg.memoryDir), slug: ref.slug, ref };
   };
   // "project" means "the layer bound to this directory on this machine": a checkout that merely
   // claims another project's origin URL gets no access to it (H1). Linking is human-only, via
   // `hearth project link`; there is deliberately no MCP tool for it.
   const layerOf = (layer: string, ref: ProjectRef): LayerRef => {
-    if (layer !== 'project') return parseLayerId(layer);
+    const l = layer === 'project' ? project(ref.slug) : parseLayerId(layer);
+    if (l.kind === 'project') assertProjectAllowed(l.slug, ref);
+    return l;
+  };
+  /** An explicit "projects/<slug>" is no more trusted than "project": same binding rule. */
+  const assertProjectAllowed = (slug: string, ref: ProjectRef): void => {
     assertLinked(ref);
-    return project(ref.slug);
+    if (slug !== ref.slug) {
+      throw new HearthError(
+        `This session is linked to projects/${ref.slug}, not projects/${slug}. ` +
+          `Only the linked project's layer and "global" are available here; use the CLI to inspect another project.`,
+      );
+    }
   };
 
   server.registerTool(
@@ -115,7 +125,7 @@ export function createMcpServer(deps: McpDeps): McpServer {
     },
     ({ name, from_project }) => guarded(async () => {
       const { store, slug, ref } = await open();
-      if (from_project === undefined) assertLinked(ref);
+      assertProjectAllowed(from_project ?? slug, ref);
       await promoteFact(store, name, project(from_project ?? slug));
       return `Promoted ${name} to global.`;
     }),

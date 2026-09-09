@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { loadConfig, requireConfig, type Config } from '../core/config.js';
+import { defaultConfig, loadConfig, requireConfig, type Config } from '../core/config.js';
 import { buildContext } from '../core/context.js';
 import { captureHandoff, type HookPayload } from '../core/capture.js';
 import { doctorExitCode, renderChecks, runDoctor } from '../core/doctor.js';
@@ -36,7 +36,8 @@ export async function openStore(deps: CliDeps): Promise<{ cfg: Config; store: Fi
 
 /** The project layer for the current directory, refusing a checkout the slug is not bound to (H1). */
 export async function currentProject(deps: CliDeps): Promise<ProjectRef> {
-  return resolveProject({ exec: deps.exec, home: deps.home, cwd: deps.cwd, now: deps.now?.() });
+  const memoryDir = (await loadConfig(deps.home))?.memoryDir ?? defaultConfig(deps.home).memoryDir;
+  return resolveProject({ exec: deps.exec, home: deps.home, cwd: deps.cwd, memoryDir, now: deps.now?.() });
 }
 
 async function linkedSlug(deps: CliDeps): Promise<string> {
@@ -170,7 +171,7 @@ export function buildProgram(deps: CliDeps): Command {
     .command('link')
     .description('Bind this project slug to the current directory on this machine')
     .action(async () => {
-      const r = await linkProject({ exec: deps.exec, home: deps.home, cwd: deps.cwd, now: deps.now?.() });
+      const r = await linkProject({ exec: deps.exec, home: deps.home, cwd: deps.cwd, memoryDir: (await loadConfig(deps.home))?.memoryDir ?? defaultConfig(deps.home).memoryDir, now: deps.now?.() });
       out(`Linked ${r.slug} to ${r.path}\n${r.previous && r.previous !== r.path ? `Was bound to ${r.previous}; that checkout will need linking again to use this layer.\n` : ''}`);
     });
 
@@ -242,7 +243,7 @@ export function buildProgram(deps: CliDeps): Command {
         return;
       }
       const store = new FileStore(cfg.memoryDir);
-      const ref = await resolveProject({ exec: deps.exec, home: deps.home, cwd, now: deps.now?.() });
+      const ref = await resolveProject({ exec: deps.exec, home: deps.home, cwd, memoryDir: cfg.memoryDir, now: deps.now?.() });
       out(await buildContext({
         store, slug: ref.slug, capTokens: cfg.contextCapTokens,
         unlinkedNote: ref.linked ? null : unlinkedMessage(ref),

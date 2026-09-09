@@ -3,7 +3,8 @@ import { basename, join, resolve } from 'node:path';
 import type { Exec } from './exec.js';
 import { parseOwnerRepo, remoteUrl } from './git.js';
 import { slugify } from './slug.js';
-import { HearthError } from './types.js';
+import { FileStore } from './store.js';
+import { HearthError, project as projectLayer } from './types.js';
 
 export async function projectSlug(exec: Exec, cwd: string): Promise<string> {
   const url = await remoteUrl(exec, cwd);
@@ -74,21 +75,43 @@ export async function canonicalPath(p: string): Promise<string> {
   }
 }
 
+/** Why a checkout is not linked, which decides what the user is told. */
+export type UnlinkedReason = 'bound-elsewhere' | 'has-unbound-memory';
+
 export interface ProjectRef {
   slug: string;
   /** Canonical path of the directory this session is running in. */
   path: string;
-  /** False when the slug is bound to a different directory on this machine. */
+  /** False when this checkout may not read or write the slug's layer. */
   linked: boolean;
-  /** The directory the slug is bound to (equals `path` when linked). */
-  boundPath: string;
+  /** The directory the slug is bound to; null when nothing is bound yet. */
+  boundPath: string | null;
+  reason: UnlinkedReason | null;
 }
 
 export interface ProjectDeps {
   exec: Exec;
   home: string;
   cwd: string;
+  /** Required: first-sight auto-binding is only safe when the layer is empty. */
+  memoryDir: string;
   now?: Date;
+}
+
+/**
+ * Does this machine already hold memory for the slug? An unbound slug whose layer arrived over
+ * sync must never be auto-bound: a hostile repo declaring that origin would otherwise be handed
+ * the whole layer on first sight and lock the real checkout out. Errors count as "yes", so an
+ * unreadable layer fails closed.
+ */
+async function layerHasMemory(memoryDir: string, slug: string): Promise<boolean> {
+  const store = new FileStore(memoryDir);
+  try {
+    if ((await store.listFacts(projectLayer(slug))).length > 0) return true;
+    return (await store.listHandoffs(slug)).length > 0;
+  } catch {
+    return true;
+  }
 }
 
 /**
@@ -102,11 +125,15 @@ export async function resolveProject(deps: ProjectDeps): Promise<ProjectRef> {
   const bindings = await loadBindings(deps.home);
   const existing = bindings[slug];
   if (!existing) {
+    if (await layerHasMemory(deps.memoryDir, slug)) {
+      return { slug, path, linked: false, boundPath: null, reason: 'has-unbound-memory' };
+    }
     bindings[slug] = { path, linkedAt: (deps.now ?? new Date()).toISOString() };
     await saveBindings(deps.home, bindings).catch(() => undefined);
-    return { slug, path, linked: true, boundPath: path };
+    return { slug, path, linked: true, boundPath: path, reason: null };
   }
-  return { slug, path, linked: existing.path === path, boundPath: existing.path };
+  const linked = existing.path === path;
+  return { slug, path, linked, boundPath: existing.path, reason: linked ? null : 'bound-elsewhere' };
 }
 
 /** Rebind a slug to the current directory. An explicit human action; there is no MCP tool for it. */
@@ -121,6 +148,12 @@ export async function linkProject(deps: ProjectDeps): Promise<{ slug: string; pa
 }
 
 export function unlinkedMessage(ref: ProjectRef): string {
+  if (ref.reason === 'has-unbound-memory') {
+    return (
+      `projects/${ref.slug} already has memory on this machine but is not linked to any folder; ` +
+      `run hearth project link here if this is that project.`
+    );
+  }
   return `Project memory for ${ref.slug} is bound to ${ref.boundPath}; this checkout at ${ref.path} is not linked. Run: hearth project link`;
 }
 

@@ -37,7 +37,7 @@ export async function captureHandoff(payload: HookPayload, deps: CaptureDeps): P
   } else {
     // An automatic handoff must never land in a layer this checkout is not linked to: that is
     // how a hostile repo would plant text that a real session reads back later.
-    const ref = await resolveProject({ exec: deps.exec, home: deps.home, cwd, now: deps.now });
+    const ref = await resolveProject({ exec: deps.exec, home: deps.home, cwd, memoryDir: deps.store.root, now: deps.now });
     if (!ref.linked) return null;
     slug = ref.slug;
   }

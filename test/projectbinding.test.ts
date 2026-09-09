@@ -1,6 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildProgram, runCli, type CliDeps } from '../src/cli/program.js';
@@ -136,5 +136,60 @@ describe('project binding (H1)', () => {
     expect(refused.code).toBe(1);
     expect(refused.stderr).toContain('Project memory for api is bound to');
     expect((await hearth(home, two, ['memory', 'context'], JSON.stringify({ cwd: two }))).stdout).not.toContain('first api');
+  });
+});
+
+/**
+ * Round 1: two bypasses the independent review verified against the first H1 fix.
+ */
+describe('project binding closes the first-sight and explicit-slug bypasses (H1)', () => {
+  const tmp = mkTmpDir();
+  const home = join(tmp.dir, 'home');
+  const memory = join(home, 'memory');
+  const hostile = join(tmp.dir, 'hostile');
+
+  beforeAll(async () => {
+    await saveConfig(home, { ...defaultConfig(home), device: 'mac' });
+    // A layer that arrived over sync: present on disk, not yet bound to any folder here.
+    mkdirSync(join(memory, 'projects', 'acme-crm', 'handoffs'), { recursive: true });
+    writeFileSync(
+      join(memory, 'projects', 'acme-crm', 'prod-db.md'),
+      '---\nname: prod-db\ndescription: Prod DB host\nmetadata:\n  pinned: true\n---\nProd DB host is db.internal:5432.\n',
+    );
+    writeFileSync(
+      join(memory, 'projects', 'acme-crm', 'handoffs', '2026-09-08-1000-other.md'),
+      '---\ndevice: other\nsource: agent\nsession: s\nbranch: main\ntimestamp: 2026-09-08T10:00:00.000Z\n---\n## Working on\nRetry logic for 429s\n',
+    );
+    await exec.run('git', ['init', '-q', hostile]);
+    await exec.run('git', ['remote', 'add', 'origin', 'git@github.com:acme/crm.git'], { cwd: hostile });
+  });
+  afterAll(() => tmp.cleanup());
+
+  it('never auto-binds a slug whose layer already holds memory on this machine', async () => {
+    const ctx = await hearth(home, hostile, ['memory', 'context'], JSON.stringify({ cwd: hostile }));
+    expect(ctx.code).toBe(0);
+    expect(ctx.stdout).not.toContain('db.internal');
+    expect(ctx.stdout).not.toContain('Retry logic for 429s');
+    expect(ctx.stdout).toContain('already has memory on this machine but is not linked');
+    expect(ctx.stdout).toContain('hearth project link');
+    // Nothing may have been recorded, so the real checkout can still claim the slug.
+    expect(existsSync(join(home, 'projects.json'))).toBe(false);
+  });
+
+  it('refuses an explicit projects/<slug> layer over MCP from an unlinked checkout', async () => {
+    const client = await mcpClient(home, hostile);
+    for (const call of [
+      { name: 'memory_list', arguments: { layer: 'projects/acme-crm' } },
+      { name: 'memory_read', arguments: { layer: 'projects/acme-crm', name: 'prod-db' } },
+      { name: 'memory_write', arguments: { layer: 'projects/acme-crm', text: 'planted', name: 'planted' } },
+      { name: 'memory_promote', arguments: { name: 'prod-db', from_project: 'acme-crm' } },
+    ]) {
+      const r = (await client.callTool(call)) as { isError?: boolean };
+      expect(r.isError, `${call.name} should be refused`).toBe(true);
+      expect(textOf(r)).toMatch(/not linked|already has memory/);
+    }
+    await client.close();
+    expect(existsSync(join(memory, 'projects', 'acme-crm', 'planted.md'))).toBe(false);
+    expect(existsSync(join(memory, 'global', 'prod-db.md'))).toBe(false);
   });
 });
