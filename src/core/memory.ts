@@ -1,4 +1,4 @@
-import matter from 'gray-matter';
+import { parseFrontmatter, stringifyFrontmatter } from './frontmatter.js';
 import { slugify } from './slug.js';
 import type { MemoryStore } from './store.js';
 import { FACT_TYPES, GLOBAL, HearthError, layerId, type Fact, type FactType, type LayerRef } from './types.js';
@@ -18,8 +18,8 @@ function asString(v: unknown): string {
 }
 
 export function parseFact(name: string, raw: string): Fact {
-  const parsed = matter(raw);
-  const data = parsed.data as Record<string, unknown>;
+  const parsed = parseFrontmatter(raw);
+  const data = parsed.data;
   const meta = (typeof data.metadata === 'object' && data.metadata ? data.metadata : {}) as Record<string, unknown>;
   const body = parsed.content.trim();
   const type = FACT_TYPES.includes(meta.type as FactType) ? (meta.type as FactType) : 'reference';
@@ -35,7 +35,7 @@ export function parseFact(name: string, raw: string): Fact {
 }
 
 export function serializeFact(f: Fact): string {
-  return matter.stringify(`${f.body}\n`, {
+  return stringifyFrontmatter(`${f.body}\n`, {
     name: f.name,
     description: f.description,
     metadata: { type: f.type, created: f.created, device: f.device, pinned: f.pinned },

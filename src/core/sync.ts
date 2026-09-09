@@ -1,7 +1,7 @@
-import matter from 'gray-matter';
 import { writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import type { Exec, ExecResult } from './exec.js';
+import { parseFrontmatter, stringifyFrontmatter } from './frontmatter.js';
 import { currentBranch } from './git.js';
 import { pruneAllHandoffs } from './handoff.js';
 import { regenerateIndex } from './memory.js';
@@ -127,8 +127,8 @@ async function resolveConflict(git: Git, cwd: string, file: string, device: stri
     // own "name: <original>" field wins over the filename in parseFact and the index shows a
     // duplicate entry under the original name instead of a flagged "(conflict copy)" entry.
     const conflictName = `${base.slice(0, -3)}.conflict-${device}`;
-    const parsed = matter(local.stdout);
-    const rewritten = matter.stringify(`${parsed.content.trim()}\n`, { ...parsed.data, name: conflictName });
+    const parsed = parseFrontmatter(local.stdout);
+    const rewritten = stringifyFrontmatter(`${parsed.content.trim()}\n`, { ...parsed.data, name: conflictName });
     const copy = join(cwd, dirname(file), `${conflictName}.md`);
     await writeFile(copy, rewritten, 'utf8');
     result.conflicts.push(file);

@@ -1,4 +1,4 @@
-import matter from 'gray-matter';
+import { parseFrontmatter, stringifyFrontmatter } from './frontmatter.js';
 import type { MemoryStore } from './store.js';
 import { HearthError, type Handoff, type HandoffSource } from './types.js';
 
@@ -23,7 +23,7 @@ function str(v: unknown): string {
 
 export function serializeHandoff(h: Handoff): string {
   const body = HANDOFF_SECTIONS.map(([key, title]) => `## ${title}\n${h[key].trim()}\n`).join('\n');
-  return matter.stringify(body, {
+  return stringifyFrontmatter(body, {
     device: h.device, source: h.source, session: h.session, branch: h.branch, timestamp: h.timestamp,
   });
 }
@@ -31,8 +31,8 @@ export function serializeHandoff(h: Handoff): string {
 const SECTION_TITLES = new Set(HANDOFF_SECTIONS.map(([, title]) => title));
 
 export function parseHandoff(id: string, raw: string): Handoff {
-  const parsed = matter(raw);
-  const d = parsed.data as Record<string, unknown>;
+  const parsed = parseFrontmatter(raw);
+  const d = parsed.data;
   const sections: Record<string, string> = {};
   let current: string | null = null;
   for (const line of parsed.content.split('\n')) {

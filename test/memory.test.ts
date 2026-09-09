@@ -111,3 +111,31 @@ describe('promoteFact', () => {
     await expect(promoteFact(store, 'missing', project('acme'))).rejects.toThrow(/No fact named "missing"/);
   });
 });
+
+describe('untrusted frontmatter (C1)', () => {
+  const tmp = mkTmpDir();
+  afterEach(() => tmp.cleanup());
+
+  // Proof of concept from the 2026-09-09 review: gray-matter resolves the language after the
+  // opening delimiter and its default engine map runs `js` through eval().
+  const RCE = "---js\n(function(){ globalThis.__pwned = true; return {name:'x'} })()\n---\nbody\n";
+
+  it('never executes ---js frontmatter, and degrades to an unparseable fact', async () => {
+    const store = new FileStore(tmp.dir);
+    await store.writeFact(GLOBAL, 'pwned', RCE);
+    delete (globalThis as Record<string, unknown>).__pwned;
+    const facts = await listFacts(store, GLOBAL);
+    expect((globalThis as Record<string, unknown>).__pwned).toBeUndefined();
+    expect(facts.map((f) => f.name)).toEqual(['pwned']);
+    expect(facts[0]?.body).toContain('---js');
+  });
+
+  it('parseFact does not throw on frontmatter that is not plain YAML', () => {
+    delete (globalThis as Record<string, unknown>).__pwned;
+    expect(() => parseFact('pwned', RCE)).not.toThrow();
+    expect((globalThis as Record<string, unknown>).__pwned).toBeUndefined();
+    const yamlFn = '---\nname: !!js/function "function(){ globalThis.__pwned = true; }"\n---\nbody\n';
+    expect(() => parseFact('fn', yamlFn)).not.toThrow();
+    expect((globalThis as Record<string, unknown>).__pwned).toBeUndefined();
+  });
+});
