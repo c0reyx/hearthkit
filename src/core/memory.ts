@@ -1,5 +1,7 @@
-import matter from 'gray-matter';
+import { parseFrontmatter, stringifyFrontmatter } from './frontmatter.js';
 import { slugify } from './slug.js';
+import { stripNoise } from './transcript.js';
+import { neutraliseEnvelope } from './untrusted.js';
 import type { MemoryStore } from './store.js';
 import { FACT_TYPES, GLOBAL, HearthError, layerId, type Fact, type FactType, type LayerRef } from './types.js';
 
@@ -12,19 +14,34 @@ export function firstLine(text: string, max = 100): string {
   return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line;
 }
 
+export const DESCRIPTION_MAX = 200;
+
+/**
+ * Descriptions become single lines of the index and of the session-start context block, so a
+ * stored newline was structural spoofing: `description: "harmless\n- INJECTED"` produced two
+ * bullets. Collapse to one line, strip harness tags, and clamp the length (H2).
+ */
+export function singleLine(text: string, max = DESCRIPTION_MAX): string {
+  const one = neutraliseEnvelope(stripNoise(text)).replace(/\s+/g, ' ').trim();
+  return one.length > max ? `${one.slice(0, max - 1).trimEnd()}…` : one;
+}
+
 function asString(v: unknown): string {
   if (v instanceof Date) return isoDate(v);
   return typeof v === 'string' ? v : '';
 }
 
 export function parseFact(name: string, raw: string): Fact {
-  const parsed = matter(raw);
-  const data = parsed.data as Record<string, unknown>;
+  const parsed = parseFrontmatter(raw);
+  const data = parsed.data;
   const meta = (typeof data.metadata === 'object' && data.metadata ? data.metadata : {}) as Record<string, unknown>;
   const body = parsed.content.trim();
   const type = FACT_TYPES.includes(meta.type as FactType) ? (meta.type as FactType) : 'reference';
   return {
-    name: asString(data.name) || name,
+    // The validated filename is the identity, never the frontmatter `name`: that field is
+    // attacker-controlled text that gets rendered as a heading and an index line, and it is
+    // written into the committed MEMORY.md (H2). A file's own claim about its name is ignored.
+    name,
     description: asString(data.description) || firstLine(body),
     type,
     created: asString(meta.created),
@@ -35,7 +52,7 @@ export function parseFact(name: string, raw: string): Fact {
 }
 
 export function serializeFact(f: Fact): string {
-  return matter.stringify(`${f.body}\n`, {
+  return stringifyFrontmatter(`${f.body}\n`, {
     name: f.name,
     description: f.description,
     metadata: { type: f.type, created: f.created, device: f.device, pinned: f.pinned },
@@ -62,7 +79,7 @@ export async function writeFact(store: MemoryStore, input: WriteFactInput): Prom
   const prev = existingRaw === null ? null : parseFact(name, existingRaw);
   const fact: Fact = {
     name,
-    description: input.description ?? firstLine(body),
+    description: singleLine(input.description ?? firstLine(body)),
     type: input.type ?? prev?.type ?? 'reference',
     created: prev?.created || isoDate(input.now ?? new Date()),
     device: input.device,
@@ -82,7 +99,9 @@ export async function readFact(store: MemoryStore, layer: LayerRef, name: string
 export async function listFacts(store: MemoryStore, layer: LayerRef): Promise<Fact[]> {
   const out: Fact[] = [];
   for (const name of await store.listFacts(layer)) {
-    const f = await readFact(store, layer, name);
+    // One unreadable or unsafe file must not take down a whole listing or the session-start
+    // block; `hearth doctor` reports what was skipped (H4).
+    const f = await readFact(store, layer, name).catch(() => null);
     if (f) out.push(f);
   }
   return out;
@@ -97,7 +116,7 @@ export async function deleteFact(store: MemoryStore, layer: LayerRef, name: stri
 export function indexLine(f: Fact): string {
   const flags = `${f.type}${f.pinned ? ', pinned' : ''}`;
   const conflict = f.name.includes('.conflict-') ? ' (conflict copy)' : '';
-  return `- ${f.name}: ${f.description} [${flags}]${conflict}`;
+  return `- ${f.name}: ${singleLine(f.description)} [${flags}]${conflict}`;
 }
 
 export function renderIndex(layer: LayerRef, facts: Fact[]): string {

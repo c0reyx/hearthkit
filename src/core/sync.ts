@@ -1,11 +1,10 @@
-import matter from 'gray-matter';
-import { writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import type { Exec, ExecResult } from './exec.js';
+import { parseFrontmatter, stringifyFrontmatter } from './frontmatter.js';
 import { currentBranch } from './git.js';
 import { pruneAllHandoffs } from './handoff.js';
 import { regenerateIndex } from './memory.js';
-import { INDEX_FILE, type FileStore } from './store.js';
+import { INDEX_FILE, findUnsafeEntries, writeInsideRoot, type FileStore } from './store.js';
 
 export interface SyncResult {
   committed: boolean;
@@ -35,7 +34,16 @@ export async function syncRepo(exec: Exec, store: FileStore, opts: SyncOptions):
   const result: SyncResult = { committed: false, pulled: false, pushed: false, conflicts: [], resolved: [], pruned: [], error: null };
   const git: Git = (...args) => exec.run('git', args, { cwd, env: GIT_ENV });
 
-  result.committed = await commitAll(git, `hearth: ${opts.device} ${now.toISOString()}`);
+  const firstCommit = await commitAll(git, `hearth: ${opts.device} ${now.toISOString()}`);
+  result.committed = firstCommit.committed;
+  if (firstCommit.error) {
+    // A failed commit used to be silently ignored, which both stopped memory from ever leaving
+    // the machine and left the repo without a HEAD — the precondition for the destructive
+    // reset below. Stop here: fetch, reset and push must not run.
+    result.error = firstCommit.error;
+    log(result.error);
+    return result;
+  }
   const branch = (await currentBranch(exec, cwd)) ?? 'main';
 
   const fetch = await git('fetch', '-q', 'origin');
@@ -49,9 +57,20 @@ export async function syncRepo(exec: Exec, store: FileStore, opts: SyncOptions):
   const hasRemote = (await git('rev-parse', '--verify', '-q', `origin/${branch}`)).code === 0;
 
   if (hasRemote && !hasLocal) {
+    // `reset --hard` deletes anything not in that commit. With no local commits, everything in
+    // the working tree is by definition unpushed, so refuse rather than discard it.
+    const dirty = (await git('status', '--porcelain')).stdout.trim();
+    if (dirty) {
+      result.error =
+        `refusing to check out origin/${branch} over uncommitted files in ${cwd}: ` +
+        `${dirty.split('\n').slice(0, 5).join('; ')}. Commit or move them, then run hearth sync again.`;
+      log(result.error);
+      return result;
+    }
     const reset = await git('reset', '-q', '--hard', `origin/${branch}`);
     if (reset.code !== 0) {
       result.error = `could not check out origin/${branch}: ${reset.stderr.trim()}`;
+      log(result.error);
       return result;
     }
     result.pulled = true;
@@ -85,9 +104,24 @@ export async function syncRepo(exec: Exec, store: FileStore, opts: SyncOptions):
     result.pulled = true;
   }
 
+  // A pull can introduce symlinks (H4). Audit before anything is parsed, rendered or written.
+  const unsafe = await findUnsafeEntries(cwd);
+  if (unsafe.length) {
+    result.error =
+      `${unsafe.map((p) => `symlink inside memory repo: ${p}`).join(', ')}. ` +
+      `Nothing was parsed or pushed. Delete them (git -C ${cwd} rm <path>) and run hearth sync again.`;
+    log(result.error);
+    return result;
+  }
+
   for (const layer of await store.listLayers()) await regenerateIndex(store, layer);
   result.pruned = await pruneAllHandoffs(store, now);
-  await commitAll(git, `hearth: post-sync maintenance (${opts.device})`);
+  const maintenance = await commitAll(git, `hearth: post-sync maintenance (${opts.device})`);
+  if (maintenance.error) {
+    result.error = maintenance.error;
+    log(result.error);
+    return result;
+  }
 
   if ((await git('rev-parse', '--verify', '-q', 'HEAD')).code !== 0) return result; // nothing to push yet
   const push = await git('push', '-q', '-u', 'origin', `HEAD:${branch}`);
@@ -100,12 +134,24 @@ export async function syncRepo(exec: Exec, store: FileStore, opts: SyncOptions):
   return result;
 }
 
-async function commitAll(git: Git, message: string): Promise<boolean> {
+export interface CommitResult {
+  committed: boolean;
+  /** Set only for a real failure; "nothing to commit" is not one. */
+  error: string | null;
+}
+
+const NOTHING_TO_COMMIT = /nothing to commit|nothing added to commit|no changes added to commit/i;
+
+async function commitAll(git: Git, message: string): Promise<CommitResult> {
   await git('add', '-A');
   const staged = await git('diff', '--cached', '--quiet');
-  if (staged.code === 0) return false;
+  if (staged.code === 0) return { committed: false, error: null };
   const c = await git('commit', '-q', '-m', message);
-  return c.code === 0;
+  if (c.code === 0) return { committed: true, error: null };
+  const output = `${c.stderr}\n${c.stdout}`;
+  if (NOTHING_TO_COMMIT.test(output)) return { committed: false, error: null };
+  const detail = c.stderr.trim() || c.stdout.trim() || `git commit exited ${c.code}`;
+  return { committed: false, error: `commit failed: ${detail.split('\n').filter(Boolean).join(' ')}` };
 }
 
 async function resolveConflict(git: Git, cwd: string, file: string, device: string, result: SyncResult): Promise<void> {
@@ -123,14 +169,15 @@ async function resolveConflict(git: Git, cwd: string, file: string, device: stri
   }
 
   if (base !== INDEX_FILE && base.endsWith('.md')) {
-    // Rewrite the frontmatter name to match the conflict-copy filename; otherwise the copy's
-    // own "name: <original>" field wins over the filename in parseFact and the index shows a
-    // duplicate entry under the original name instead of a flagged "(conflict copy)" entry.
+    // Identity is the validated filename: parseFact ignores the frontmatter `name` (H2). The
+    // rewrite below is compatibility only — it keeps the field consistent with the filename for
+    // anyone reading the file by hand, or with a copy written by an older version.
     const conflictName = `${base.slice(0, -3)}.conflict-${device}`;
-    const parsed = matter(local.stdout);
-    const rewritten = matter.stringify(`${parsed.content.trim()}\n`, { ...parsed.data, name: conflictName });
+    const parsed = parseFrontmatter(local.stdout);
+    const rewritten = stringifyFrontmatter(`${parsed.content.trim()}\n`, { ...parsed.data, name: conflictName });
     const copy = join(cwd, dirname(file), `${conflictName}.md`);
-    await writeFile(copy, rewritten, 'utf8');
+    // Guarded like every other write: the copy's name could itself have been planted as a symlink.
+    await writeInsideRoot(cwd, copy, rewritten);
     result.conflicts.push(file);
   }
   // Upstream keeps the original name; indexes are regenerated after the rebase.

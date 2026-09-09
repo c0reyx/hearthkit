@@ -1,5 +1,5 @@
 import { listHandoffs } from './handoff.js';
-import { firstLine, listFacts } from './memory.js';
+import { firstLine, listFacts, singleLine } from './memory.js';
 import type { MemoryStore } from './store.js';
 import { GLOBAL, layerId, project, type LayerRef } from './types.js';
 
@@ -37,7 +37,9 @@ export async function search(store: MemoryStore, query: string, slug: string | n
   for (const layer of layers) {
     for (const f of await listFacts(store, layer)) {
       const score = scoreText(ts, f.name, f.description, f.body);
-      if (score > 0) hits.push({ layer: layerId(layer), kind: 'fact', name: f.name, description: f.description, score, created: f.created });
+      // Hits are rendered into a tool result, which is model context: same treatment as the
+      // session-start block (H2). singleLine strips harness tags and neutralises the envelope.
+      if (score > 0) hits.push({ layer: layerId(layer), kind: 'fact', name: f.name, description: singleLine(f.description), score, created: f.created });
     }
   }
   if (slug) {
@@ -45,7 +47,7 @@ export async function search(store: MemoryStore, query: string, slug: string | n
       const text = [h.workingOn, h.decisions, h.openThreads, h.nextSteps, h.filesTouched].join('\n');
       const score = scoreText(ts, h.id, '', text);
       if (score > 0) {
-        hits.push({ layer: layerId(project(slug)), kind: 'handoff', name: h.id, description: firstLine(h.workingOn), score, created: h.timestamp.slice(0, 10) });
+        hits.push({ layer: layerId(project(slug)), kind: 'handoff', name: h.id, description: singleLine(firstLine(h.workingOn)), score, created: h.timestamp.slice(0, 10) });
       }
     }
   }

@@ -1,4 +1,4 @@
-import matter from 'gray-matter';
+import { parseFrontmatter, stringifyFrontmatter } from './frontmatter.js';
 import type { MemoryStore } from './store.js';
 import { HearthError, type Handoff, type HandoffSource } from './types.js';
 
@@ -23,7 +23,7 @@ function str(v: unknown): string {
 
 export function serializeHandoff(h: Handoff): string {
   const body = HANDOFF_SECTIONS.map(([key, title]) => `## ${title}\n${h[key].trim()}\n`).join('\n');
-  return matter.stringify(body, {
+  return stringifyFrontmatter(body, {
     device: h.device, source: h.source, session: h.session, branch: h.branch, timestamp: h.timestamp,
   });
 }
@@ -31,8 +31,8 @@ export function serializeHandoff(h: Handoff): string {
 const SECTION_TITLES = new Set(HANDOFF_SECTIONS.map(([, title]) => title));
 
 export function parseHandoff(id: string, raw: string): Handoff {
-  const parsed = matter(raw);
-  const d = parsed.data as Record<string, unknown>;
+  const parsed = parseFrontmatter(raw);
+  const d = parsed.data;
   const sections: Record<string, string> = {};
   let current: string | null = null;
   for (const line of parsed.content.split('\n')) {
@@ -102,7 +102,9 @@ export async function writeHandoff(store: MemoryStore, input: HandoffInput): Pro
 export async function listHandoffs(store: MemoryStore, slug: string): Promise<Handoff[]> {
   const out: Handoff[] = [];
   for (const id of await store.listHandoffs(slug)) {
-    const raw = await store.readHandoff(slug, id);
+    // One unsafe or unreadable file must not take down the session-start block; without this
+    // the refusal escaped into hookSafe and the user got no memory and no message (H4).
+    const raw = await store.readHandoff(slug, id).catch(() => null);
     if (raw !== null) out.push(parseHandoff(id, raw));
   }
   return out.sort((a, b) => b.timestamp.localeCompare(a.timestamp) || b.id.localeCompare(a.id));

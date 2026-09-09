@@ -1,3 +1,4 @@
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { defaultConfig, saveConfig } from '../src/core/config.js';
@@ -23,10 +24,24 @@ describe('where', () => {
     expect(byLabel.config).toMatchObject({ path: join(tmp.dir, 'config.json'), exists: true, owner: 'hearthkit' });
     expect(byLabel['memory repo (local clone)']).toMatchObject({ exists: false, note: 'syncs with git@github.com:c/m.git' });
     expect(byLabel['this project layer']?.path).toBe(join(tmp.dir, 'memory', 'projects', 'acme-crm'));
+    // `where` reports; it must not claim the slug for whatever folder it was run from (round 2).
+    expect(byLabel['this project layer']?.note).toContain('not linked to any folder yet');
+    expect(existsSync(join(tmp.dir, 'projects.json'))).toBe(false);
+    expect(byLabel['project links']?.path).toBe(join(tmp.dir, 'projects.json'));
+    expect(byLabel['last sync outcome']?.path).toBe(join(tmp.dir, 'sync-state.json'));
     expect(byLabel['plugin (bundled CLI + MCP server)']?.path).toBe('/plugins/hearthkit');
     expect(byLabel['Claude Code transcripts for this folder']?.path).toBe(join(tmp.dir, 'claude', 'projects', '-repo'));
     const text = renderWhere(w);
     expect(text).toContain('project slug: acme-crm');
     expect(text).toContain('✔ config');
+  });
+
+  it('shows the bound folder once a project is linked', async () => {
+    await saveConfig(tmp.dir, defaultConfig(tmp.dir));
+    writeFileSync(join(tmp.dir, 'projects.json'), JSON.stringify({ 'acme-crm': { path: '/repo', linkedAt: '2026-09-09T12:00:00.000Z' } }));
+    const exec = new FakeExec().on('git', ['remote', 'get-url', 'origin'], { stdout: 'git@github.com:acme/crm.git\n' });
+    const w = await whereAll({ home: tmp.dir, cwd: '/repo', exec, claudeHome: join(tmp.dir, 'claude'), pluginRoot: null });
+    const byLabel = Object.fromEntries(w.locations.map((l) => [l.label, l]));
+    expect(byLabel['this project layer']?.note).toContain('linked to this folder (/repo)');
   });
 });

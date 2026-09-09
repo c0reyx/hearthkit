@@ -118,7 +118,8 @@ describe('hearth CLI (end to end against a local bare remote)', () => {
     expect(hint.stdout).toContain('/hearth:setup');
     const ctx = await hearth(['memory', 'context'], { home, input: JSON.stringify({ cwd: crm, hook_event_name: 'SessionStart' }) });
     expect(ctx.code).toBe(0);
-    expect(ctx.stdout.startsWith('# hearthkit memory')).toBe(true);
+    expect(ctx.stdout.startsWith('<hearth-memory provenance="')).toBe(true);
+    expect(ctx.stdout).toContain('# hearthkit memory');
     expect(ctx.stdout).toContain('Retry logic for 429s');
     expect(ctx.stdout).toContain('"projects/acme-crm"');
   });

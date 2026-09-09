@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig } from './config.js';
 import type { Exec } from './exec.js';
-import { projectSlug } from './project.js';
+import { resolveProject, unlinkedMessage } from './project.js';
 
 export interface Location {
   label: string;
@@ -43,12 +43,24 @@ async function exists(p: string): Promise<boolean> {
 export async function whereAll(deps: WhereDeps): Promise<WhereResult> {
   const claudeHome = deps.claudeHome ?? join(homedir(), '.claude');
   const cfg = await loadConfig(deps.home);
-  const slug = await projectSlug(deps.exec, deps.cwd);
   const memoryDir = cfg?.memoryDir ?? join(deps.home, 'memory');
+  const ref = await resolveProject({ exec: deps.exec, home: deps.home, cwd: deps.cwd, memoryDir, bind: false });
+  const slug = ref.slug;
   const items: Omit<Location, 'exists'>[] = [
     { label: 'config', path: join(deps.home, 'config.json'), owner: 'hearthkit', note: 'repo location, device name, context cap' },
+    { label: 'project links', path: join(deps.home, 'projects.json'), owner: 'hearthkit', note: 'which folder on this machine owns each project layer' },
+    { label: 'last sync outcome', path: join(deps.home, 'sync-state.json'), owner: 'hearthkit', note: 'set by hearth sync; a failure is shown at session start' },
     { label: 'memory repo (local clone)', path: memoryDir, owner: 'hearthkit', note: cfg?.remote ? `syncs with ${cfg.remote}` : 'not set up yet (hearth init)' },
-    { label: 'this project layer', path: join(memoryDir, 'projects', slug), owner: 'hearthkit', note: 'facts and handoffs for the current folder' },
+    {
+      label: 'this project layer',
+      path: join(memoryDir, 'projects', slug),
+      owner: 'hearthkit',
+      note: !ref.linked
+        ? `NOT linked here — ${unlinkedMessage(ref)}`
+        : ref.boundPath === null
+          ? 'not linked to any folder yet; the first session in this project claims it'
+          : `linked to this folder (${ref.path})`,
+    },
     { label: 'logs', path: join(deps.home, 'logs', 'hearth.log'), owner: 'hearthkit', note: 'hook, sync, and MCP logs (no transcript text)' },
     { label: 'plugin (bundled CLI + MCP server)', path: deps.pluginRoot ?? '(not running inside the plugin)', owner: 'Claude Code', note: 'dist/hearth.js and dist/mcp.js live here' },
     { label: 'Claude Code settings', path: join(claudeHome, 'settings.json'), owner: 'Claude Code', note: 'marketplace and plugin registration' },

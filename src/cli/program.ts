@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { loadConfig, requireConfig, type Config } from '../core/config.js';
+import { defaultConfig, loadConfig, requireConfig, type Config } from '../core/config.js';
 import { buildContext } from '../core/context.js';
 import { captureHandoff, type HookPayload } from '../core/capture.js';
 import { doctorExitCode, renderChecks, runDoctor } from '../core/doctor.js';
@@ -9,10 +9,11 @@ import { listHandoffs, writeHandoff } from '../core/handoff.js';
 import { initMemory } from '../core/init.js';
 import { appendLog } from '../core/log.js';
 import { deleteFact, listFacts, promoteFact, writeFact } from '../core/memory.js';
-import { projectSlug } from '../core/project.js';
+import { assertLinked, linkProject, resolveProject, unlinkedMessage, type ProjectRef } from '../core/project.js';
 import { search } from '../core/search.js';
-import { FileStore } from '../core/store.js';
+import { FileStore, findUnsafeEntries } from '../core/store.js';
 import { syncRepo } from '../core/sync.js';
+import { readSyncState, recordSyncOutcome, syncErrorNote } from '../core/syncstate.js';
 import { FACT_TYPES, HearthError, layerId, parseLayerId, project, type FactType, type LayerRef } from '../core/types.js';
 import { renderWhere, whereAll } from '../core/where.js';
 
@@ -33,8 +34,20 @@ export async function openStore(deps: CliDeps): Promise<{ cfg: Config; store: Fi
   return { cfg, store: new FileStore(cfg.memoryDir) };
 }
 
+/** The project layer for the current directory, refusing a checkout the slug is not bound to (H1). */
+export async function currentProject(deps: CliDeps, opts: { bind?: boolean } = {}): Promise<ProjectRef> {
+  const memoryDir = (await loadConfig(deps.home))?.memoryDir ?? defaultConfig(deps.home).memoryDir;
+  return resolveProject({ exec: deps.exec, home: deps.home, cwd: deps.cwd, memoryDir, bind: opts.bind, now: deps.now?.() });
+}
+
+async function linkedSlug(deps: CliDeps): Promise<string> {
+  const ref = await currentProject(deps);
+  assertLinked(ref);
+  return ref.slug;
+}
+
 export async function resolveLayer(arg: string, deps: CliDeps): Promise<LayerRef> {
-  if (arg === 'project') return project(await projectSlug(deps.exec, deps.cwd));
+  if (arg === 'project') return project(await linkedSlug(deps));
   if (arg.startsWith('project:')) return parseLayerId(`projects/${arg.slice('project:'.length)}`);
   return parseLayerId(arg);
 }
@@ -65,6 +78,13 @@ function factType(v: string | undefined): FactType | undefined {
 }
 
 const LAYER_HELP = 'global | project (current folder) | project:<slug> | projects/<slug>';
+
+/** A fixed sentence — never the paths themselves — when the memory repo holds unsafe entries. */
+async function unsafeNote(memoryDir: string): Promise<string | null> {
+  const unsafe = await findUnsafeEntries(memoryDir).catch(() => []);
+  if (unsafe.length === 0) return null;
+  return `${unsafe.length} entr${unsafe.length === 1 ? 'y' : 'ies'} under the memory repo ${unsafe.length === 1 ? 'is' : 'are'} not an ordinary file and ${unsafe.length === 1 ? 'was' : 'were'} ignored; run \`hearth doctor\`.`;
+}
 
 export function buildProgram(deps: CliDeps): Command {
   const out = deps.stdout;
@@ -103,7 +123,7 @@ export function buildProgram(deps: CliDeps): Command {
   });
 
   program.command('list').description('Layers, fact counts, handoffs, conflicts').action(async () => {
-    const { store } = await openStore(deps);
+    const { cfg, store } = await openStore(deps);
     const lines: string[] = [];
     for (const layer of await store.listLayers()) {
       const facts = await listFacts(store, layer);
@@ -115,6 +135,10 @@ export function buildProgram(deps: CliDeps): Command {
           (conflicts ? `  ! ${conflicts} conflict cop${conflicts === 1 ? 'y' : 'ies'}` : ''),
       );
     }
+    const unsafe = await findUnsafeEntries(cfg.memoryDir).catch(() => []);
+    if (unsafe.length) {
+      lines.push('', `! ignored ${unsafe.length} entr${unsafe.length === 1 ? 'y' : 'ies'} that ${unsafe.length === 1 ? 'is' : 'are'} not an ordinary file: ${unsafe.join(', ')}`, '  Run hearth doctor, then: hearth memory delete <layer> <name>');
+    }
     out(lines.length ? `${lines.join('\n')}\n` : 'No memory yet. Start a Claude Code session, or run: hearth memory add global "..."\n');
   });
 
@@ -124,7 +148,18 @@ export function buildProgram(deps: CliDeps): Command {
     .option('--quiet', 'print nothing unless there is an error')
     .action(async (o: { quiet?: boolean }) => {
       const { cfg, store } = await openStore(deps);
-      const r = await syncRepo(deps.exec, store, { device: cfg.device, now: now() });
+      // A thrown error (a symlink refusal mid-sync, say) has to be recorded too, or the next
+      // session-start block would report the last *returned* failure and nothing since.
+      let r;
+      try {
+        r = await syncRepo(deps.exec, store, { device: cfg.device, now: now() });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        await recordSyncOutcome(deps.home, message, now()).catch(() => undefined);
+        await appendLog(deps.home, { command: 'sync', error: message }).catch(() => undefined);
+        throw new HearthError(`Sync incomplete: ${message}`, 2);
+      }
+      await recordSyncOutcome(deps.home, r.error, now()).catch(() => undefined);
       if (r.error) {
         // A background sync prints nowhere, so the log is the only record of a failure.
         await appendLog(deps.home, { command: 'sync', error: r.error, committed: r.committed }).catch(() => undefined);
@@ -141,6 +176,27 @@ export function buildProgram(deps: CliDeps): Command {
         r.pruned.length ? `Pruned ${r.pruned.length} old handoff(s).` : '',
       ].filter(Boolean);
       out(`Synced. ${bits.join(' ')}${extra.length ? `\n${extra.join('\n')}` : ''}\n`);
+    });
+
+  const projectCmd = program.command('project').description('Which directory this machine loads a project layer from');
+
+  projectCmd
+    .command('show')
+    .description('Print the project slug, the directory it is bound to, and whether this one matches')
+    .action(async () => {
+      const ref = await currentProject(deps, { bind: false });
+      const bound = ref.boundPath ?? '(no folder yet)';
+      const status = ref.linked ? 'linked' : `NOT linked — ${unlinkedMessage(ref)}`;
+      const shown = ref.linked && ref.boundPath === null ? 'not claimed yet — the first session in this project claims it' : status;
+      out(`slug:        ${ref.slug}\nbound to:    ${bound}\nthis folder: ${ref.path}\nstatus:      ${shown}\n`);
+    });
+
+  projectCmd
+    .command('link')
+    .description('Bind this project slug to the current directory on this machine')
+    .action(async () => {
+      const r = await linkProject({ exec: deps.exec, home: deps.home, cwd: deps.cwd, memoryDir: (await loadConfig(deps.home))?.memoryDir ?? defaultConfig(deps.home).memoryDir, now: deps.now?.() });
+      out(`Linked ${r.slug} to ${r.path}\n${r.previous && r.previous !== r.path ? `Was bound to ${r.previous}; that checkout will need linking again to use this layer.\n` : ''}`);
     });
 
   const memory = program.command('memory').description('Work with facts');
@@ -163,7 +219,12 @@ export function buildProgram(deps: CliDeps): Command {
     .option('--project <slug>', 'search a specific project layer instead of the current folder')
     .action(async (query: string, o: { project?: string }) => {
       const { store } = await openStore(deps);
-      const slug = o.project ?? (await projectSlug(deps.exec, deps.cwd));
+      let slug: string | null = o.project ?? null;
+      if (!slug) {
+        const ref = await currentProject(deps);
+        if (!ref.linked) out(`${unlinkedMessage(ref)}\nSearching global memory only.\n`);
+        slug = ref.linked ? ref.slug : null;
+      }
       const hits = await search(store, query, slug);
       out(hits.length ? `${hits.map((h) => `${h.layer}/${h.name}  (${h.kind}, score ${h.score})\n    ${h.description}`).join('\n')}\n` : 'No matches.\n');
     });
@@ -206,8 +267,12 @@ export function buildProgram(deps: CliDeps): Command {
         return;
       }
       const store = new FileStore(cfg.memoryDir);
-      const slug = await projectSlug(deps.exec, cwd);
-      out(await buildContext({ store, slug, capTokens: cfg.contextCapTokens }));
+      const ref = await resolveProject({ exec: deps.exec, home: deps.home, cwd, memoryDir: cfg.memoryDir, now: deps.now?.() });
+      out(await buildContext({
+        store, slug: ref.slug, capTokens: cfg.contextCapTokens,
+        unlinkedNote: ref.linked ? null : unlinkedMessage(ref),
+        statusNotes: [syncErrorNote(await readSyncState(deps.home)), await unsafeNote(cfg.memoryDir)],
+      }));
     }));
 
   const handoff = program.command('handoff').description('Project handoffs');
@@ -222,7 +287,7 @@ export function buildProgram(deps: CliDeps): Command {
     .option('--files-touched <text>')
     .action(async (o: { workingOn: string; decisions?: string; openThreads?: string; nextSteps?: string; filesTouched?: string }) => {
       const { cfg, store } = await openStore(deps);
-      const slug = await projectSlug(deps.exec, deps.cwd);
+      const slug = await linkedSlug(deps);
       const h = await writeHandoff(store, {
         slug, device: cfg.device, source: 'agent', session: '', branch: (await currentBranch(deps.exec, deps.cwd)) ?? '',
         workingOn: o.workingOn, decisions: o.decisions, openThreads: o.openThreads, nextSteps: o.nextSteps, filesTouched: o.filesTouched, now: now(),
@@ -232,14 +297,14 @@ export function buildProgram(deps: CliDeps): Command {
 
   handoff.command('list [project]').description('List handoffs, newest first').action(async (slugArg?: string) => {
     const { store } = await openStore(deps);
-    const slug = slugArg ?? (await projectSlug(deps.exec, deps.cwd));
+    const slug = slugArg ?? (await linkedSlug(deps));
     const all = await listHandoffs(store, slug);
     out(all.length ? `${all.map((h) => `${h.id}  ${h.source}  ${h.timestamp}\n    ${h.workingOn.split('\n')[0] ?? ''}`).join('\n')}\n` : `No handoffs for ${slug}.\n`);
   });
 
   handoff.command('delete <id> [project]').description('Delete one handoff').action(async (id: string, slugArg?: string) => {
     const { store } = await openStore(deps);
-    const slug = slugArg ?? (await projectSlug(deps.exec, deps.cwd));
+    const slug = slugArg ?? (await linkedSlug(deps));
     if (!(await store.deleteHandoff(slug, id))) throw new HearthError(`No handoff ${id} in ${slug}.`);
     out(`Deleted handoff ${id}.\n`);
   });
@@ -252,7 +317,7 @@ export function buildProgram(deps: CliDeps): Command {
       const cfg = await loadConfig(deps.home);
       if (!cfg) return;
       const store = new FileStore(cfg.memoryDir);
-      const h = await captureHandoff(payload, { store, exec: deps.exec, device: cfg.device, now: now() });
+      const h = await captureHandoff(payload, { store, exec: deps.exec, home: deps.home, device: cfg.device, now: now() });
       await appendLog(deps.home, { command: 'handoff capture', session: payload.session_id ?? null, wrote: h?.id ?? null });
       deps.spawnDetached(['sync', '--quiet']);
     }));
