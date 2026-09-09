@@ -11,6 +11,7 @@ import { assertLinked, resolveProject, type ProjectRef } from '../core/project.j
 import { search } from '../core/search.js';
 import { FileStore } from '../core/store.js';
 import { syncRepo } from '../core/sync.js';
+import { recordSyncOutcome } from '../core/syncstate.js';
 import { HearthError, layerId, parseLayerId, project, type LayerRef } from '../core/types.js';
 
 export interface McpDeps {
@@ -168,6 +169,7 @@ export function createMcpServer(deps: McpDeps): McpServer {
     () => guarded(async () => {
       const { cfg, store } = await open();
       const r = await syncRepo(deps.exec, store, { device: cfg.device, now: now() });
+      await recordSyncOutcome(deps.home, r.error, now()).catch(() => undefined);
       if (r.error) throw new HearthError(`Sync incomplete: ${r.error}`);
       return `Synced.${r.committed ? ' Committed local changes.' : ''}${r.pulled ? ' Pulled.' : ''}${r.pushed ? ' Pushed.' : ' Nothing to push.'}${r.conflicts.length ? `\nConflicts kept as extra copies: ${r.conflicts.join(', ')}` : ''}`;
     }),

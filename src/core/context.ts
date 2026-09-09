@@ -56,6 +56,8 @@ export interface ContextInput {
    * project layer is then neither read nor mentioned beyond a line telling the user how to link.
    */
   unlinkedNote?: string | null;
+  /** Set when the most recent sync failed (H3); shown so a broken sync cannot stay invisible. */
+  syncNote?: string | null;
 }
 
 const byAge = (a: Fact, b: Fact) => a.created.localeCompare(b.created) || a.name.localeCompare(b.name);
@@ -98,9 +100,9 @@ export async function buildContext(input: ContextInput): Promise<string> {
       for (const f of pinned) parts.push(`### ${f.name}`, renderStored(f.body), '');
     }
     if (omitted) parts.push(`(omitted ${omitted} older memory lines to fit the context cap; use memory_search to find them)`, '');
+    parts.push(ENVELOPE_CLOSE, '');
+    if (input.syncNote) parts.push(`## Memory sync\n${singleLine(input.syncNote, 300)}`, '');
     parts.push(
-      ENVELOPE_CLOSE,
-      '',
       '## Tools',
       'Memory tools (MCP server "hearth"): memory_search, memory_read, memory_write, memory_list, memory_promote, memory_handoff.',
       `Write to layer "global" for things true in any repo, "projects/${slug}" for this codebase. If a project fact turns out to be general, call memory_promote.`,

@@ -35,7 +35,16 @@ export async function syncRepo(exec: Exec, store: FileStore, opts: SyncOptions):
   const result: SyncResult = { committed: false, pulled: false, pushed: false, conflicts: [], resolved: [], pruned: [], error: null };
   const git: Git = (...args) => exec.run('git', args, { cwd, env: GIT_ENV });
 
-  result.committed = await commitAll(git, `hearth: ${opts.device} ${now.toISOString()}`);
+  const firstCommit = await commitAll(git, `hearth: ${opts.device} ${now.toISOString()}`);
+  result.committed = firstCommit.committed;
+  if (firstCommit.error) {
+    // A failed commit used to be silently ignored, which both stopped memory from ever leaving
+    // the machine and left the repo without a HEAD — the precondition for the destructive
+    // reset below. Stop here: fetch, reset and push must not run.
+    result.error = firstCommit.error;
+    log(result.error);
+    return result;
+  }
   const branch = (await currentBranch(exec, cwd)) ?? 'main';
 
   const fetch = await git('fetch', '-q', 'origin');
@@ -49,6 +58,16 @@ export async function syncRepo(exec: Exec, store: FileStore, opts: SyncOptions):
   const hasRemote = (await git('rev-parse', '--verify', '-q', `origin/${branch}`)).code === 0;
 
   if (hasRemote && !hasLocal) {
+    // `reset --hard` deletes anything not in that commit. With no local commits, everything in
+    // the working tree is by definition unpushed, so refuse rather than discard it.
+    const dirty = (await git('status', '--porcelain')).stdout.trim();
+    if (dirty) {
+      result.error =
+        `refusing to check out origin/${branch} over uncommitted files in ${cwd}: ` +
+        `${dirty.split('\n').slice(0, 5).join('; ')}. Commit or move them, then run hearth sync again.`;
+      log(result.error);
+      return result;
+    }
     const reset = await git('reset', '-q', '--hard', `origin/${branch}`);
     if (reset.code !== 0) {
       result.error = `could not check out origin/${branch}: ${reset.stderr.trim()}`;
@@ -87,7 +106,12 @@ export async function syncRepo(exec: Exec, store: FileStore, opts: SyncOptions):
 
   for (const layer of await store.listLayers()) await regenerateIndex(store, layer);
   result.pruned = await pruneAllHandoffs(store, now);
-  await commitAll(git, `hearth: post-sync maintenance (${opts.device})`);
+  const maintenance = await commitAll(git, `hearth: post-sync maintenance (${opts.device})`);
+  if (maintenance.error) {
+    result.error = maintenance.error;
+    log(result.error);
+    return result;
+  }
 
   if ((await git('rev-parse', '--verify', '-q', 'HEAD')).code !== 0) return result; // nothing to push yet
   const push = await git('push', '-q', '-u', 'origin', `HEAD:${branch}`);
@@ -100,12 +124,24 @@ export async function syncRepo(exec: Exec, store: FileStore, opts: SyncOptions):
   return result;
 }
 
-async function commitAll(git: Git, message: string): Promise<boolean> {
+export interface CommitResult {
+  committed: boolean;
+  /** Set only for a real failure; "nothing to commit" is not one. */
+  error: string | null;
+}
+
+const NOTHING_TO_COMMIT = /nothing to commit|nothing added to commit|no changes added to commit/i;
+
+async function commitAll(git: Git, message: string): Promise<CommitResult> {
   await git('add', '-A');
   const staged = await git('diff', '--cached', '--quiet');
-  if (staged.code === 0) return false;
+  if (staged.code === 0) return { committed: false, error: null };
   const c = await git('commit', '-q', '-m', message);
-  return c.code === 0;
+  if (c.code === 0) return { committed: true, error: null };
+  const output = `${c.stderr}\n${c.stdout}`;
+  if (NOTHING_TO_COMMIT.test(output)) return { committed: false, error: null };
+  const detail = c.stderr.trim() || c.stdout.trim() || `git commit exited ${c.code}`;
+  return { committed: false, error: `commit failed: ${detail.split('\n').filter(Boolean).join(' ')}` };
 }
 
 async function resolveConflict(git: Git, cwd: string, file: string, device: string, result: SyncResult): Promise<void> {

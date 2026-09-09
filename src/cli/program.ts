@@ -13,6 +13,7 @@ import { assertLinked, linkProject, resolveProject, unlinkedMessage, type Projec
 import { search } from '../core/search.js';
 import { FileStore } from '../core/store.js';
 import { syncRepo } from '../core/sync.js';
+import { readSyncState, recordSyncOutcome, syncErrorNote } from '../core/syncstate.js';
 import { FACT_TYPES, HearthError, layerId, parseLayerId, project, type FactType, type LayerRef } from '../core/types.js';
 import { renderWhere, whereAll } from '../core/where.js';
 
@@ -136,6 +137,7 @@ export function buildProgram(deps: CliDeps): Command {
     .action(async (o: { quiet?: boolean }) => {
       const { cfg, store } = await openStore(deps);
       const r = await syncRepo(deps.exec, store, { device: cfg.device, now: now() });
+      await recordSyncOutcome(deps.home, r.error, now()).catch(() => undefined);
       if (r.error) {
         // A background sync prints nowhere, so the log is the only record of a failure.
         await appendLog(deps.home, { command: 'sync', error: r.error, committed: r.committed }).catch(() => undefined);
@@ -244,6 +246,7 @@ export function buildProgram(deps: CliDeps): Command {
       out(await buildContext({
         store, slug: ref.slug, capTokens: cfg.contextCapTokens,
         unlinkedNote: ref.linked ? null : unlinkedMessage(ref),
+        syncNote: syncErrorNote(await readSyncState(deps.home)),
       }));
     }));
 

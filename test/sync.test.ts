@@ -1,7 +1,9 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { RealExec } from '../src/core/exec.js';
+import { buildProgram, runCli, type CliDeps } from '../src/cli/program.js';
+import { defaultConfig, saveConfig } from '../src/core/config.js';
+import { FakeExec, RealExec } from '../src/core/exec.js';
 import { listHandoffs, writeHandoff } from '../src/core/handoff.js';
 import { writeFact } from '../src/core/memory.js';
 import { FileStore } from '../src/core/store.js';
@@ -107,5 +109,117 @@ describe('syncRepo', () => {
     expect(ra.pruned).toEqual([old.id]);
     await syncRepo(exec, b, { device: 'b' });
     expect((await listHandoffs(b, 'acme')).map((h) => h.id)).toEqual([fresh.id]);
+  });
+});
+
+/**
+ * H3: `commitAll` returned `c.code === 0` and threw the failure away, so a repo whose git
+ * identity is unusable (a fresh machine, gpgsign without a key, a failing pre-commit hook)
+ * reported "Synced." forever — and on the "no local commits, remote has commits" path it ran
+ * `git reset --hard origin/<branch>`, deleting memory that had never been pushed.
+ */
+describe('syncRepo when git commit fails (H3)', () => {
+  const tmp = mkTmpDir();
+  afterEach(() => tmp.cleanup());
+  const exec = new RealExec();
+
+  async function remoteWithCommits(): Promise<string> {
+    const remote = await makeBareRemote(tmp.dir);
+    const seed = join(tmp.dir, 'seed');
+    await cloneWithIdentity(remote, seed, 'seed');
+    await writeFact(new FileStore(seed), { layer: GLOBAL, text: 'from remote', name: 'from-remote', device: 'seed' });
+    await syncRepo(exec, new FileStore(seed), { device: 'seed' });
+    return remote;
+  }
+
+  /** A hand-initialised memory repo: no commits yet, and an unusable git identity. */
+  async function brokenIdentityClone(remote: string): Promise<FileStore> {
+    const dir = join(tmp.dir, 'broken');
+    await exec.run('git', ['init', '-q', '-b', 'main', dir]);
+    await exec.run('git', ['remote', 'add', 'origin', remote], { cwd: dir });
+    await exec.run('git', ['config', 'user.email', ''], { cwd: dir });
+    await exec.run('git', ['config', 'user.name', ''], { cwd: dir });
+    return new FileStore(dir);
+  }
+
+  it('reports the git error, pushes nothing, and never discards never-pushed memory', async () => {
+    const remote = await remoteWithCommits();
+    const broken = await brokenIdentityClone(remote);
+    await writeFact(broken, { layer: GLOBAL, text: 'precious local memory never pushed', name: 'precious', device: 'broken' });
+
+    const r = await syncRepo(exec, broken, { device: 'broken' });
+    // The data loss first: this file was deleted by `git reset --hard origin/main` before the fix.
+    expect(existsSync(join(broken.root, 'global', 'precious.md'))).toBe(true);
+    expect(r.error).toMatch(/commit failed/i);
+    expect(r.error).toMatch(/who you are|empty ident/i);
+    expect(r.committed).toBe(false);
+    expect(r.pulled).toBe(false);
+    expect(r.pushed).toBe(false);
+    expect(existsSync(join(broken.root, 'global', 'precious.md'))).toBe(true);
+    expect(await broken.readFact(GLOBAL, 'precious')).toContain('precious local memory');
+    // The remote's own file must not have been checked out over the top either.
+    expect(existsSync(join(broken.root, 'global', 'from-remote.md'))).toBe(false);
+  });
+
+  it('still reports success when there is genuinely nothing to commit', async () => {
+    const remote = await makeBareRemote(tmp.dir);
+    const a = join(tmp.dir, 'clean');
+    await cloneWithIdentity(remote, a, 'clean');
+    const store = new FileStore(a);
+    const r = await syncRepo(exec, store, { device: 'clean' });
+    expect(r.error).toBeNull();
+    expect(r.committed).toBe(false);
+  });
+
+  it('a failed sync is recorded and surfaces in the next session-start context block', async () => {
+    const remote = await remoteWithCommits();
+    const broken = await brokenIdentityClone(remote);
+    await writeFact(broken, { layer: GLOBAL, text: 'precious local memory never pushed', name: 'precious', device: 'broken' });
+    const home = join(tmp.dir, 'home');
+    await saveConfig(home, { ...defaultConfig(home), memoryDir: broken.root, device: 'broken' });
+
+    const run = async (argv: string[], input = ''): Promise<{ code: number; stdout: string; stderr: string }> => {
+      const out: string[] = [];
+      const err: string[] = [];
+      const deps: CliDeps = {
+        exec, home, cwd: tmp.dir, env: {}, stdout: (s) => out.push(s), stderr: (s) => err.push(s),
+        readStdin: async () => input, spawnDetached: () => undefined, now: () => new Date('2026-09-09T12:00:00Z'),
+      };
+      const code = await runCli(buildProgram(deps), ['node', 'hearth', ...argv], (s) => err.push(s));
+      return { code, stdout: out.join(''), stderr: err.join('') };
+    };
+
+    const sync = await run(['sync']);
+    expect(sync.code).toBe(2);
+    expect(sync.stderr).toMatch(/commit failed/i);
+    const ctx = await run(['memory', 'context'], JSON.stringify({ cwd: tmp.dir }));
+    expect(ctx.stdout).toContain('Memory sync failed on 2026-09-09');
+    expect(ctx.stdout).toMatch(/commit failed/i);
+  });
+});
+
+describe('syncRepo never resets over uncommitted files (H3)', () => {
+  const tmp = mkTmpDir();
+  afterEach(() => tmp.cleanup());
+
+  it('refuses the "no local commits" checkout of origin when the working tree is not clean', async () => {
+    // A repo with no HEAD, a remote that has commits, and files git did not stage: the exact
+    // shape in which `git reset --hard origin/main` used to delete never-pushed memory.
+    const fake = new FakeExec()
+      .on('git', ['add', '-A'], { code: 0 })
+      .on('git', ['diff', '--cached', '--quiet'], { code: 0 })
+      .on('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { stdout: 'main\n' })
+      .on('git', ['fetch', '-q', 'origin'], { code: 0 })
+      .on('git', ['rev-parse', '--verify', '-q', 'HEAD'], { code: 1 })
+      .on('git', ['rev-parse', '--verify', '-q', 'origin/main'], { code: 0 })
+      .on('git', ['status', '--porcelain'], { stdout: '?? global/precious.md\n' });
+
+    const r = await syncRepo(fake, new FileStore(tmp.dir), { device: 'mac' });
+    expect(r.error).toMatch(/refusing to check out origin\/main/);
+    expect(r.error).toContain('global/precious.md');
+    expect(r.pulled).toBe(false);
+    expect(r.pushed).toBe(false);
+    expect(fake.calls.some((c) => c.args[0] === 'reset')).toBe(false);
+    expect(fake.calls.some((c) => c.args[0] === 'push')).toBe(false);
   });
 });
