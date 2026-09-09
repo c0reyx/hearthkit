@@ -93,7 +93,8 @@ A project's memory lives under a slug derived from its git `origin`, so every ma
 - The first folder you open a project in claims it, as long as that project has no memory on this machine yet.
 - A layer that already has memory here — one that arrived over sync, for example on a new machine — is never claimed automatically. hearthkit says so at session start; run `hearth project link` in the right folder once.
 - A second clone, a git worktree, or a checkout you moved needs `hearth project link` too. Linking is exclusive: the folder you link becomes the only one that reads and writes that layer, and the previous one has to be linked back.
-- Until a folder is linked, that project's facts and handoffs are neither loaded nor written there. Global memory is unaffected. `hearth project show` prints the current state.
+- Until a folder is linked, that project's facts and handoffs are neither loaded nor written there, and the agent's memory tools refuse that layer even if it is named explicitly. Global memory is unaffected. `hearth project show` prints the current state without claiming anything, and so does `hearth where`.
+- You can always reach a layer by hand: `hearth memory show project:<slug> <name>`, `hearth memory add project:<slug> "…"`, `hearth list`. Those are deliberate human actions and are not restricted by linking.
 
 ## Conflicts
 
@@ -115,7 +116,7 @@ Everything under the memory repo is treated as untrusted input, because it can a
 
 ### Behaviour changes to know about
 
-- Project memory is loaded and written only in the folder linked to that project on this machine; see "Linking a project" above. On a machine that already has synced project memory, run `hearth project link` once per project.
+- Project memory is loaded, and written by the agent (the MCP memory tools), only in the folder linked to that project on this machine; see "Linking a project" above. The CLI `project:<slug>` / `projects/<slug>` form remains available from anywhere for hand inspection and repair. On a machine that already has synced project memory, run `hearth project link` once per project.
 - `hearth sync` stops and reports instead of continuing when `git commit` fails, when the working tree would be overwritten, or when anything under the memory root is not an ordinary file. A failed sync is flagged at the next session start; the git error itself goes to `~/.hearth/logs/hearth.log` and `hearth doctor`.
 - Frontmatter is parsed as YAML only. A memory file whose frontmatter is anything else is shown as an unparseable fact rather than being interpreted.
 - Memory files hearthkit writes are created `0600` (owner read/write only).
