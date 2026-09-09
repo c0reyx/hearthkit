@@ -23,6 +23,9 @@ describe('where', () => {
     expect(byLabel.config).toMatchObject({ path: join(tmp.dir, 'config.json'), exists: true, owner: 'hearthkit' });
     expect(byLabel['memory repo (local clone)']).toMatchObject({ exists: false, note: 'syncs with git@github.com:c/m.git' });
     expect(byLabel['this project layer']?.path).toBe(join(tmp.dir, 'memory', 'projects', 'acme-crm'));
+    expect(byLabel['this project layer']?.note).toContain('linked to this folder');
+    expect(byLabel['project links']?.path).toBe(join(tmp.dir, 'projects.json'));
+    expect(byLabel['last sync outcome']?.path).toBe(join(tmp.dir, 'sync-state.json'));
     expect(byLabel['plugin (bundled CLI + MCP server)']?.path).toBe('/plugins/hearthkit');
     expect(byLabel['Claude Code transcripts for this folder']?.path).toBe(join(tmp.dir, 'claude', 'projects', '-repo'));
     const text = renderWhere(w);

@@ -97,6 +97,7 @@ describe('project binding (H1)', () => {
     expect(show.stdout).toContain('slug:        acme-crm');
     expect(show.stdout).toContain(`bound to:    ${await canonicalPath(real)}`);
     expect(show.stdout).toContain('NOT linked');
+    expect(show.stdout).toContain('this checkout at');
 
     const link = await hearth(home, hostile, ['project', 'link']);
     expect(link.code, link.stderr).toBe(0);

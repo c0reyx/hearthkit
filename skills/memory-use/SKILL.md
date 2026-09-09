@@ -22,5 +22,8 @@ Set `pinned: true` only for facts that must be in front of you every session, su
 ## Handoffs
 Before you finish a task, and whenever the user says they are stopping or switching machines, call `memory_handoff`. Be concrete: what was in progress, what was decided and why, what is unresolved, exact next steps, files touched. The next session, possibly on another machine, starts with that text.
 
+## When a tool says the project is not linked
+`projects/<slug>` on this machine belongs to one folder, and this session's folder is not it. Do not retry with an explicit `projects/<slug>` layer, and do not write the fact to `global` to get around it — global memory is for things true in any repo. Tell the user what happened and that running `hearth project link` in the folder they mean will hand that project's memory to it (`hearth project show` prints the current state). Global memory and search still work meanwhile.
+
 ## Searching
 When the user refers to something you may have discussed before, or asks "where were we", call `memory_search` before asking them to repeat themselves.

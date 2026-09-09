@@ -185,7 +185,9 @@ export function buildProgram(deps: CliDeps): Command {
     .description('Print the project slug, the directory it is bound to, and whether this one matches')
     .action(async () => {
       const ref = await currentProject(deps);
-      out(`slug:        ${ref.slug}\nbound to:    ${ref.boundPath}\nthis folder: ${ref.path}\nstatus:      ${ref.linked ? 'linked' : 'NOT linked — run: hearth project link'}\n`);
+      const bound = ref.boundPath ?? '(no folder yet)';
+      const status = ref.linked ? 'linked' : `NOT linked — ${unlinkedMessage(ref)}`;
+      out(`slug:        ${ref.slug}\nbound to:    ${bound}\nthis folder: ${ref.path}\nstatus:      ${status}\n`);
     });
 
   projectCmd

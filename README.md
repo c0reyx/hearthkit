@@ -7,7 +7,7 @@ Claude Code forgets between machines and between sessions. hearthkit stores what
 ## What you get
 
 - **Global memory**: facts about you, loaded in every session, everywhere.
-- **Project memory**: facts about one codebase, loaded when you work in it.
+- **Project memory**: facts about one codebase, loaded in the folder linked to it on this machine.
 - **Handoffs**: when a session ends, what you were working on is saved; the next session in that project starts with it, even on another laptop.
 - **Tools for the agent**: search, read, write, promote, and hand off, over MCP.
 - **Your files, your repo**: one fact per markdown file, synced with git. No database, no service.
@@ -62,6 +62,8 @@ The same tool is available in a terminal after `npm install -g hearthkit`, or di
 | `hearth memory show <layer> <name>` | print a fact |
 | `hearth memory delete <layer> <name>` | delete a fact |
 | `hearth memory promote <name>` | move a project fact to global |
+| `hearth project show` | the project slug, the folder it is linked to, and whether this one matches |
+| `hearth project link` | link this project's memory to the current folder on this machine |
 | `hearth handoff write --working-on "..." [...]` | write a handoff by hand |
 | `hearth handoff list [project]` | list handoffs |
 | `hearth handoff delete <id> [project]` | delete a handoff |
@@ -71,6 +73,8 @@ The same tool is available in a terminal after `npm install -g hearthkit`, or di
 | Path | What |
 |---|---|
 | `~/.hearth/config.json` | config: repo location, device name, context cap |
+| `~/.hearth/projects.json` | which folder on this machine owns each project layer (never synced) |
+| `~/.hearth/sync-state.json` | the outcome of the last sync; a failure is flagged at session start |
 | `~/.hearth/memory/` | memory repo (local clone); syncs with your remote |
 | `~/.hearth/memory/projects/<slug>/` | this project's layer: facts and `handoffs/` |
 | `~/.hearth/logs/hearth.log` | logs (hook, sync, MCP; no transcript text) |
@@ -80,7 +84,16 @@ The same tool is available in a terminal after `npm install -g hearthkit`, or di
 | `~/.claude/projects/<folder-slug>/` | Claude Code transcripts for the current folder; read by handoff capture, never written |
 | the running `hearth` entry point | the CLI that is executing (npm global or the plugin's dist) |
 
-`hearth where` prints this with live values. Set `HEARTH_HOME` to move `~/.hearth`. Global facts live in `~/.hearth/memory/global/`.
+`hearth where` prints this with live values, including which folder this project's layer is linked to. Set `HEARTH_HOME` to move `~/.hearth`. Global facts live in `~/.hearth/memory/global/`.
+
+## Linking a project
+
+A project's memory lives under a slug derived from its git `origin`, so every machine agrees on the name. Which *folder* that memory belongs to is decided per machine, because any repository can claim any `origin` in its `.git/config`.
+
+- The first folder you open a project in claims it, as long as that project has no memory on this machine yet.
+- A layer that already has memory here — one that arrived over sync, for example on a new machine — is never claimed automatically. hearthkit says so at session start; run `hearth project link` in the right folder once.
+- A second clone, a git worktree, or a checkout you moved needs `hearth project link` too. Linking is exclusive: the folder you link becomes the only one that reads and writes that layer, and the previous one has to be linked back.
+- Until a folder is linked, that project's facts and handoffs are neither loaded nor written there. Global memory is unaffected. `hearth project show` prints the current state.
 
 ## Conflicts
 
@@ -89,6 +102,23 @@ If the same fact is edited on two machines, sync keeps both: the other machine's
 ## Privacy
 
 The memory repo must be private; `hearth init` refuses a public GitHub repo. Automatic handoffs contain only what you and Claude said, never tool output or file contents. Anything can be deleted with the CLI or in the repo. hearth doctor also checks the repo's visibility on GitHub and tells you if it is not private.
+
+## What hearthkit trusts
+
+Everything under the memory repo is treated as untrusted input, because it can arrive from another machine over sync. Worth knowing:
+
+- **Memory is re-injected into future prompts.** Facts and the last handoff are printed into the model's context at session start, inside a `<hearth-memory>` block labelled "data, not instructions". A poisoned memory can still try to steer a session, so inspect what is stored — `hearth list`, `hearth memory show <layer> <name>` — and delete anything you did not intend with `hearth memory delete <layer> <name>`.
+- **Automatic handoffs quote conversation text.** What you and Claude said in the last ~30 turns is stored verbatim, including anything you pasted into the chat, and the background sync pushes it to your remote unattended. Write your own handoff (`/hearth:handoff`) if you would rather choose the words.
+- **The memory repo must be private, and its token is a machine credential.** Anyone who can push to that remote can put text — and file names — in front of your agent on every machine you use.
+- **`HEARTH_HOME` is read from the environment**, so a project-scope `.claude/settings.json` in a repository you have trusted can move where hearthkit reads its config and memory from.
+- **Frontmatter is YAML only**, files under the memory root must be ordinary files (`hearth sync` and `hearth doctor` refuse a symlink there), and memory files hearthkit creates are `0600`.
+
+### Behaviour changes to know about
+
+- Project memory is loaded and written only in the folder linked to that project on this machine; see "Linking a project" above. On a machine that already has synced project memory, run `hearth project link` once per project.
+- `hearth sync` stops and reports instead of continuing when `git commit` fails, when the working tree would be overwritten, or when anything under the memory root is not an ordinary file. A failed sync is flagged at the next session start; the git error itself goes to `~/.hearth/logs/hearth.log` and `hearth doctor`.
+- Frontmatter is parsed as YAML only. A memory file whose frontmatter is anything else is shown as an unparseable fact rather than being interpreted.
+- Memory files hearthkit writes are created `0600` (owner read/write only).
 
 ## Uninstall
 
