@@ -23,6 +23,10 @@ const NOISE = [
   /<local-command-stderr>[\s\S]*?<\/local-command-stderr>/g,
   /<task-notification>[\s\S]*?<\/task-notification>/g,
   /<task-progress>[\s\S]*?<\/task-progress>/g,
+  // Unpaired or unknown harness tags, and hearthkit's own memory envelope, so stored text
+  // cannot forge either one. Paired forms above are removed with their content first.
+  /<\/?(system|command|local-command|task-notification|task-progress|hearth-memory)[^>]*>/g,
+  /<[a-z-]*reminder[^>]*>/g,
 ];
 
 export function stripNoise(text: string): string {

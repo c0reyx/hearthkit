@@ -1,5 +1,6 @@
 import { parseFrontmatter, stringifyFrontmatter } from './frontmatter.js';
 import { slugify } from './slug.js';
+import { stripNoise } from './transcript.js';
 import type { MemoryStore } from './store.js';
 import { FACT_TYPES, GLOBAL, HearthError, layerId, type Fact, type FactType, type LayerRef } from './types.js';
 
@@ -10,6 +11,18 @@ export function isoDate(d: Date): string {
 export function firstLine(text: string, max = 100): string {
   const line = text.split('\n').map((l) => l.trim()).find((l) => l.length > 0) ?? '';
   return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line;
+}
+
+export const DESCRIPTION_MAX = 200;
+
+/**
+ * Descriptions become single lines of the index and of the session-start context block, so a
+ * stored newline was structural spoofing: `description: "harmless\n- INJECTED"` produced two
+ * bullets. Collapse to one line, strip harness tags, and clamp the length (H2).
+ */
+export function singleLine(text: string, max = DESCRIPTION_MAX): string {
+  const one = stripNoise(text).replace(/\s+/g, ' ').trim();
+  return one.length > max ? `${one.slice(0, max - 1).trimEnd()}…` : one;
 }
 
 function asString(v: unknown): string {
@@ -62,7 +75,7 @@ export async function writeFact(store: MemoryStore, input: WriteFactInput): Prom
   const prev = existingRaw === null ? null : parseFact(name, existingRaw);
   const fact: Fact = {
     name,
-    description: input.description ?? firstLine(body),
+    description: singleLine(input.description ?? firstLine(body)),
     type: input.type ?? prev?.type ?? 'reference',
     created: prev?.created || isoDate(input.now ?? new Date()),
     device: input.device,
@@ -97,7 +110,7 @@ export async function deleteFact(store: MemoryStore, layer: LayerRef, name: stri
 export function indexLine(f: Fact): string {
   const flags = `${f.type}${f.pinned ? ', pinned' : ''}`;
   const conflict = f.name.includes('.conflict-') ? ' (conflict copy)' : '';
-  return `- ${f.name}: ${f.description} [${flags}]${conflict}`;
+  return `- ${f.name}: ${singleLine(f.description)} [${flags}]${conflict}`;
 }
 
 export function renderIndex(layer: LayerRef, facts: Fact[]): string {
