@@ -92,6 +92,21 @@ describe('project binding (H1)', () => {
     expect(list.stdout).not.toContain('planted');
   });
 
+  it('project show and where report without claiming the slug', async () => {
+    const fresh = join(tmp.dir, 'fresh-repo');
+    await exec.run('git', ['init', '-q', fresh]);
+    await exec.run('git', ['remote', 'add', 'origin', 'git@github.com:acme/unclaimed.git'], { cwd: fresh });
+    const before = readFileSync(join(home, 'projects.json'), 'utf8');
+    const show = await hearth(home, fresh, ['project', 'show']);
+    expect(show.code, show.stderr).toBe(0);
+    expect(show.stdout).toContain('slug:        acme-unclaimed');
+    expect(show.stdout).toContain('not claimed yet');
+    await hearth(home, fresh, ['where']);
+    // Informational commands must not decide who owns a project layer.
+    expect(readFileSync(join(home, 'projects.json'), 'utf8')).toBe(before);
+    expect(JSON.parse(before) as Record<string, unknown>).not.toHaveProperty('acme-unclaimed');
+  });
+
   it('project show reports the binding, and project link hands the layer to this checkout', async () => {
     const show = await hearth(home, hostile, ['project', 'show']);
     expect(show.stdout).toContain('slug:        acme-crm');
@@ -233,5 +248,59 @@ describe('CLI degrades on unsafe memory entries (H4)', () => {
     expect(del.code, del.stderr).toBe(0);
     expect(existsSync(join(memory, 'global', 'evil.md'))).toBe(false);
     expect(readFileSync(join(tmp.dir, 'victim-rc'), 'utf8')).toBe('original\n');
+  });
+});
+
+/**
+ * Round 2 (H4): the unsafe entry is on a handoffs path. buildContext read every handoff with no
+ * per-file guard, so the throw escaped into hookSafe and the user got no memory and no message.
+ */
+describe('CLI degrades when the unsafe entry is a handoffs path (H4)', () => {
+  const tmp = mkTmpDir();
+  const home = join(tmp.dir, 'home');
+  const memory = join(home, 'memory');
+  const repo = join(tmp.dir, 'repo');
+  const elsewhere = join(tmp.dir, 'elsewhere');
+
+  beforeAll(async () => {
+    await saveConfig(home, { ...defaultConfig(home), device: 'mac' });
+    await exec.run('git', ['init', '-q', repo]);
+    mkdirSync(join(memory, 'global'), { recursive: true });
+    writeFileSync(join(memory, 'global', 'good.md'), '---\ndescription: a real fact\n---\nbody\n');
+    // Bind the folder first, so the layer is genuinely this session's to read.
+    await hearth(home, repo, ['project', 'link']);
+    // Then the remote "delivers" projects/repo/handoffs as a symlink to a directory of handoffs.
+    mkdirSync(elsewhere, { recursive: true });
+    writeFileSync(
+      join(elsewhere, '2026-09-08-1000-other.md'),
+      '---\ndevice: other\nsource: agent\nsession: s\nbranch: main\ntimestamp: 2026-09-08T10:00:00.000Z\n---\n## Working on\nsomething\n',
+    );
+    mkdirSync(join(memory, 'projects', 'repo'), { recursive: true });
+    symlinkSync(elsewhere, join(memory, 'projects', 'repo', 'handoffs'));
+    // A real memory repo is a git clone; doctor stops at its "memory repo" check without one.
+    await exec.run('git', ['init', '-q', memory]);
+    await exec.run('git', ['remote', 'add', 'origin', join(tmp.dir, 'remote.git')], { cwd: memory });
+  });
+  afterAll(() => tmp.cleanup());
+
+  it('memory context still renders and says entries were ignored', async () => {
+    const ctx = await hearth(home, repo, ['memory', 'context'], JSON.stringify({ cwd: repo }));
+    expect(ctx.code).toBe(0);
+    expect(ctx.stdout).toContain('# hearthkit memory');
+    expect(ctx.stdout).toContain('- good: a real fact');
+    expect(ctx.stdout).toContain('<hearth-status>');
+    expect(ctx.stdout).toContain('not an ordinary file');
+    expect(ctx.stdout).not.toContain('Refusing to follow a symlink');
+    expect(ctx.stdout).not.toContain('elsewhere');
+  });
+
+  it('handoff list and doctor report it instead of failing', async () => {
+    const list = await hearth(home, repo, ['handoff', 'list']);
+    expect(list.code, list.stderr).toBe(0);
+    const d = await hearth(home, repo, ['doctor', '--offline', '--json']);
+    const checks = JSON.parse(d.stdout) as { id: string; status: string; detail: string }[];
+    const symlinks = checks.find((c) => c.id === 'symlinks');
+    expect(symlinks?.status).toBe('fail');
+    expect(symlinks?.detail).toContain('projects/repo/handoffs');
   });
 });

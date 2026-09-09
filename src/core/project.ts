@@ -95,6 +95,8 @@ export interface ProjectDeps {
   cwd: string;
   /** Required: first-sight auto-binding is only safe when the layer is empty. */
   memoryDir: string;
+  /** false for informational callers (`hearth where`, `hearth project show`): report, never bind. */
+  bind?: boolean;
   now?: Date;
 }
 
@@ -127,6 +129,11 @@ export async function resolveProject(deps: ProjectDeps): Promise<ProjectRef> {
   if (!existing) {
     if (await layerHasMemory(deps.memoryDir, slug)) {
       return { slug, path, linked: false, boundPath: null, reason: 'has-unbound-memory' };
+    }
+    if (deps.bind === false) {
+      // Reporting must not change state: `hearth where` and `hearth project show` would
+      // otherwise claim the slug for whatever folder the user happened to ask from.
+      return { slug, path, linked: true, boundPath: null, reason: null };
     }
     bindings[slug] = { path, linkedAt: (deps.now ?? new Date()).toISOString() };
     await saveBindings(deps.home, bindings).catch(() => undefined);

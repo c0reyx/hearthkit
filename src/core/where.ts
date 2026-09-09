@@ -44,7 +44,7 @@ export async function whereAll(deps: WhereDeps): Promise<WhereResult> {
   const claudeHome = deps.claudeHome ?? join(homedir(), '.claude');
   const cfg = await loadConfig(deps.home);
   const memoryDir = cfg?.memoryDir ?? join(deps.home, 'memory');
-  const ref = await resolveProject({ exec: deps.exec, home: deps.home, cwd: deps.cwd, memoryDir });
+  const ref = await resolveProject({ exec: deps.exec, home: deps.home, cwd: deps.cwd, memoryDir, bind: false });
   const slug = ref.slug;
   const items: Omit<Location, 'exists'>[] = [
     { label: 'config', path: join(deps.home, 'config.json'), owner: 'hearthkit', note: 'repo location, device name, context cap' },
@@ -55,9 +55,11 @@ export async function whereAll(deps: WhereDeps): Promise<WhereResult> {
       label: 'this project layer',
       path: join(memoryDir, 'projects', slug),
       owner: 'hearthkit',
-      note: ref.linked
-        ? `linked to this folder (${ref.path})`
-        : `NOT linked here — ${unlinkedMessage(ref)}`,
+      note: !ref.linked
+        ? `NOT linked here — ${unlinkedMessage(ref)}`
+        : ref.boundPath === null
+          ? 'not linked to any folder yet; the first session in this project claims it'
+          : `linked to this folder (${ref.path})`,
     },
     { label: 'logs', path: join(deps.home, 'logs', 'hearth.log'), owner: 'hearthkit', note: 'hook, sync, and MCP logs (no transcript text)' },
     { label: 'plugin (bundled CLI + MCP server)', path: deps.pluginRoot ?? '(not running inside the plugin)', owner: 'Claude Code', note: 'dist/hearth.js and dist/mcp.js live here' },

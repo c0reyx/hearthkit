@@ -102,7 +102,9 @@ export async function writeHandoff(store: MemoryStore, input: HandoffInput): Pro
 export async function listHandoffs(store: MemoryStore, slug: string): Promise<Handoff[]> {
   const out: Handoff[] = [];
   for (const id of await store.listHandoffs(slug)) {
-    const raw = await store.readHandoff(slug, id);
+    // One unsafe or unreadable file must not take down the session-start block; without this
+    // the refusal escaped into hookSafe and the user got no memory and no message (H4).
+    const raw = await store.readHandoff(slug, id).catch(() => null);
     if (raw !== null) out.push(parseHandoff(id, raw));
   }
   return out.sort((a, b) => b.timestamp.localeCompare(a.timestamp) || b.id.localeCompare(a.id));

@@ -169,9 +169,9 @@ async function resolveConflict(git: Git, cwd: string, file: string, device: stri
   }
 
   if (base !== INDEX_FILE && base.endsWith('.md')) {
-    // Rewrite the frontmatter name to match the conflict-copy filename; otherwise the copy's
-    // own "name: <original>" field wins over the filename in parseFact and the index shows a
-    // duplicate entry under the original name instead of a flagged "(conflict copy)" entry.
+    // Identity is the validated filename: parseFact ignores the frontmatter `name` (H2). The
+    // rewrite below is compatibility only — it keeps the field consistent with the filename for
+    // anyone reading the file by hand, or with a copy written by an older version.
     const conflictName = `${base.slice(0, -3)}.conflict-${device}`;
     const parsed = parseFrontmatter(local.stdout);
     const rewritten = stringifyFrontmatter(`${parsed.content.trim()}\n`, { ...parsed.data, name: conflictName });

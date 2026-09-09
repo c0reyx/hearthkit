@@ -147,9 +147,10 @@ export async function findUnsafeEntries(root: string, limit = 50): Promise<strin
     let entries;
     try {
       entries = await readdir(dir, { withFileTypes: true });
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
-      throw err;
+    } catch {
+      // An unreadable directory (missing, no permission, replaced mid-walk) is not something an
+      // audit should die on: the caller needs the entries it *can* name.
+      return;
     }
     for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
       if (found.length >= limit) return;
@@ -254,7 +255,13 @@ export class FileStore implements MemoryStore {
   }
 
   async listHandoffs(slug: string): Promise<string[]> {
-    const ids = await listMd(this.handoffDir(slug));
+    const dir = this.handoffDir(slug);
+    try {
+      await assertInsideRoot(this.root, join(dir, '.probe'));
+    } catch {
+      return []; // an unsafe handoffs directory yields no handoffs instead of throwing
+    }
+    const ids = await listMd(dir);
     return ids.sort().reverse();
   }
 

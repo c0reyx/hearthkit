@@ -35,9 +35,9 @@ export async function openStore(deps: CliDeps): Promise<{ cfg: Config; store: Fi
 }
 
 /** The project layer for the current directory, refusing a checkout the slug is not bound to (H1). */
-export async function currentProject(deps: CliDeps): Promise<ProjectRef> {
+export async function currentProject(deps: CliDeps, opts: { bind?: boolean } = {}): Promise<ProjectRef> {
   const memoryDir = (await loadConfig(deps.home))?.memoryDir ?? defaultConfig(deps.home).memoryDir;
-  return resolveProject({ exec: deps.exec, home: deps.home, cwd: deps.cwd, memoryDir, now: deps.now?.() });
+  return resolveProject({ exec: deps.exec, home: deps.home, cwd: deps.cwd, memoryDir, bind: opts.bind, now: deps.now?.() });
 }
 
 async function linkedSlug(deps: CliDeps): Promise<string> {
@@ -184,10 +184,11 @@ export function buildProgram(deps: CliDeps): Command {
     .command('show')
     .description('Print the project slug, the directory it is bound to, and whether this one matches')
     .action(async () => {
-      const ref = await currentProject(deps);
+      const ref = await currentProject(deps, { bind: false });
       const bound = ref.boundPath ?? '(no folder yet)';
       const status = ref.linked ? 'linked' : `NOT linked — ${unlinkedMessage(ref)}`;
-      out(`slug:        ${ref.slug}\nbound to:    ${bound}\nthis folder: ${ref.path}\nstatus:      ${status}\n`);
+      const shown = ref.linked && ref.boundPath === null ? 'not claimed yet — the first session in this project claims it' : status;
+      out(`slug:        ${ref.slug}\nbound to:    ${bound}\nthis folder: ${ref.path}\nstatus:      ${shown}\n`);
     });
 
   projectCmd

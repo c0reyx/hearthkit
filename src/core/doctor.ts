@@ -112,7 +112,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<Check[]> {
   // H4: a hostile remote can commit a symlink; writing through one is an arbitrary file write.
   // Reported before the conflict scan, which reads the layers: an unsafe entry must be named
   // even if it makes a layer unreadable.
-  const unsafe = await findUnsafeEntries(cfg.memoryDir);
+  const unsafe = await findUnsafeEntries(cfg.memoryDir).catch(() => []);
   checks.push(unsafe.length
     ? fail('symlinks', 'memory files are ordinary files', unsafe.map((p) => `symlink inside memory repo: ${p}`).join(', '),
       `Delete each one (they are not memory and hearthkit refuses to read or write them): hearth memory delete <layer> <name>, or git -C ${cfg.memoryDir} rm <path> && hearth sync`)

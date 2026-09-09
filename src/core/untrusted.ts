@@ -22,7 +22,7 @@ export const STATUS_CLOSE = '</hearth-status>';
  * closing tag out of two harmless-looking halves, so the neutraliser has to see the result.
  */
 export function neutraliseEnvelope(text: string): string {
-  return text.replace(/<(\/?)\s*hearth-(memory|status)/gi, '‹$1hearth-$2');
+  return text.replace(/<\s*(\/?)\s*hearth-(memory|status)/gi, '‹$1hearth-$2');
 }
 
 /** Stored text may not forge this block's own headings. */
