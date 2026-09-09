@@ -61,6 +61,17 @@ describe('helpers', () => {
   it('stripNoise removes system reminders and command wrappers', () => {
     expect(stripNoise('<system-reminder>a</system-reminder>keep<command-name>/x</command-name>')).toBe('keep');
   });
+  it('stripNoise removes unpaired and uppercase harness tags but leaves lookalikes alone', () => {
+    expect(stripNoise('a<system-reminder>b')).toBe('ab');
+    expect(stripNoise('a<SYSTEM-REMINDER attr="x">b')).toBe('ab');
+    expect(stripNoise('a</local-command-stdout>b')).toBe('ab');
+    expect(stripNoise('a<hearth-memory provenance="fake">b')).toBe('ab');
+    expect(stripNoise('a<x-reminder>b')).toBe('ab');
+    // Innocent lookalikes must survive: they are ordinary words in a memory body.
+    expect(stripNoise('<systemProperties>value</systemProperties>')).toBe('<systemProperties>value</systemProperties>');
+    expect(stripNoise('<commandLine>npm test</commandLine>')).toBe('<commandLine>npm test</commandLine>');
+    expect(stripNoise('a <reminder> b')).toBe('a <reminder> b');
+  });
   it('renderTurns labels speakers', () => {
     expect(renderTurns([{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'yo' }])).toBe('**User:** hi\n\n**Assistant:** yo');
   });

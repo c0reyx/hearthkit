@@ -1,6 +1,7 @@
 import { parseFrontmatter, stringifyFrontmatter } from './frontmatter.js';
 import { slugify } from './slug.js';
 import { stripNoise } from './transcript.js';
+import { neutraliseEnvelope } from './untrusted.js';
 import type { MemoryStore } from './store.js';
 import { FACT_TYPES, GLOBAL, HearthError, layerId, type Fact, type FactType, type LayerRef } from './types.js';
 
@@ -21,7 +22,7 @@ export const DESCRIPTION_MAX = 200;
  * bullets. Collapse to one line, strip harness tags, and clamp the length (H2).
  */
 export function singleLine(text: string, max = DESCRIPTION_MAX): string {
-  const one = stripNoise(text).replace(/\s+/g, ' ').trim();
+  const one = neutraliseEnvelope(stripNoise(text)).replace(/\s+/g, ' ').trim();
   return one.length > max ? `${one.slice(0, max - 1).trimEnd()}…` : one;
 }
 
@@ -37,7 +38,10 @@ export function parseFact(name: string, raw: string): Fact {
   const body = parsed.content.trim();
   const type = FACT_TYPES.includes(meta.type as FactType) ? (meta.type as FactType) : 'reference';
   return {
-    name: asString(data.name) || name,
+    // The validated filename is the identity, never the frontmatter `name`: that field is
+    // attacker-controlled text that gets rendered as a heading and an index line, and it is
+    // written into the committed MEMORY.md (H2). A file's own claim about its name is ignored.
+    name,
     description: asString(data.description) || firstLine(body),
     type,
     created: asString(meta.created),

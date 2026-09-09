@@ -193,8 +193,12 @@ describe('syncRepo when git commit fails (H3)', () => {
     expect(sync.code).toBe(2);
     expect(sync.stderr).toMatch(/commit failed/i);
     const ctx = await run(['memory', 'context'], JSON.stringify({ cwd: tmp.dir }));
-    expect(ctx.stdout).toContain('Memory sync failed on 2026-09-09');
-    expect(ctx.stdout).toMatch(/commit failed/i);
+    expect(ctx.stdout).toContain('Memory sync failed on 2026-09-09; run `hearth doctor`.');
+    // git's own text is remote-controlled and can carry the remote URL: log file only, never
+    // the session-start block (round 1, H2 item 4).
+    expect(ctx.stdout).not.toMatch(/commit failed/i);
+    expect(ctx.stdout).not.toMatch(/ident|who you are/i);
+    expect(readFileSync(join(home, 'logs', 'hearth.log'), 'utf8')).toMatch(/commit failed/i);
   });
 });
 

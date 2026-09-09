@@ -14,19 +14,23 @@ interface Block {
   name?: unknown;
 }
 
+// Case-insensitive throughout: an uppercase <SYSTEM-REMINDER> used to keep its inner text
+// because only the tags were dropped by the unpaired rules below.
 const NOISE = [
-  /<system-reminder>[\s\S]*?<\/system-reminder>/g,
-  /<command-name>[\s\S]*?<\/command-name>/g,
-  /<command-message>[\s\S]*?<\/command-message>/g,
-  /<command-args>[\s\S]*?<\/command-args>/g,
-  /<local-command-stdout>[\s\S]*?<\/local-command-stdout>/g,
-  /<local-command-stderr>[\s\S]*?<\/local-command-stderr>/g,
-  /<task-notification>[\s\S]*?<\/task-notification>/g,
-  /<task-progress>[\s\S]*?<\/task-progress>/g,
-  // Unpaired or unknown harness tags, and hearthkit's own memory envelope, so stored text
-  // cannot forge either one. Paired forms above are removed with their content first.
-  /<\/?(system|command|local-command|task-notification|task-progress|hearth-memory)[^>]*>/g,
-  /<[a-z-]*reminder[^>]*>/g,
+  /<system-reminder>[\s\S]*?<\/system-reminder>/gi,
+  /<command-name>[\s\S]*?<\/command-name>/gi,
+  /<command-message>[\s\S]*?<\/command-message>/gi,
+  /<command-args>[\s\S]*?<\/command-args>/gi,
+  /<local-command-stdout>[\s\S]*?<\/local-command-stdout>/gi,
+  /<local-command-stderr>[\s\S]*?<\/local-command-stderr>/gi,
+  /<task-notification>[\s\S]*?<\/task-notification>/gi,
+  /<task-progress>[\s\S]*?<\/task-progress>/gi,
+  // Unpaired harness tags, and hearthkit's own blocks, so stored text cannot forge either one.
+  // The paired forms above are removed with their content first. Tag names are listed in full
+  // and anchored with a lookahead so ordinary words are not mangled: <systemProperties>,
+  // <commandLine> and <reminder> are memory content, not harness constructs.
+  /<\/?(?:system-reminder|system|command-name|command-message|command-args|local-command-stdout|local-command-stderr|task-notification|task-progress|hearth-memory|hearth-status)(?=[\s/>])[^>]*>/gi,
+  /<\/?[a-z]+(?:-[a-z]+)*-reminder(?=[\s/>])[^>]*>/gi,
 ];
 
 export function stripNoise(text: string): string {

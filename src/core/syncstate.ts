@@ -43,9 +43,15 @@ export async function recordSyncOutcome(home: string, error: string | null, now:
   await writeFile(syncStatePath(home), `${JSON.stringify(state, null, 2)}\n`, 'utf8');
 }
 
-/** One line for the session-start block when the most recent sync failed. */
+/**
+ * One line for the session-start block when the most recent sync failed. Deliberately a fixed
+ * sentence plus a validated date: `lastSyncError` carries git's stderr, which a hostile remote
+ * controls and which can contain the remote URL (and any token embedded in it). It belongs in
+ * the log file and in `hearth doctor`, not in a prompt.
+ */
 export function syncErrorNote(state: SyncState): string | null {
   if (!state.lastSyncError) return null;
-  const when = (state.lastSyncErrorAt ?? '').slice(0, 10) || 'an unknown date';
-  return `Memory sync failed on ${when}: ${state.lastSyncError}`;
+  const day = (state.lastSyncErrorAt ?? '').slice(0, 10);
+  const when = /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : 'an earlier date';
+  return `Memory sync failed on ${when}; run \`hearth doctor\`.`;
 }
