@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildProgram, runCli, type CliDeps } from '../src/cli/program.js';
@@ -221,5 +221,33 @@ describe('syncRepo never resets over uncommitted files (H3)', () => {
     expect(r.pushed).toBe(false);
     expect(fake.calls.some((c) => c.args[0] === 'reset')).toBe(false);
     expect(fake.calls.some((c) => c.args[0] === 'push')).toBe(false);
+  });
+});
+
+describe('syncRepo audits the memory repo after a pull (H4)', () => {
+  const tmp = mkTmpDir();
+  afterEach(() => tmp.cleanup());
+  const exec = new RealExec();
+
+  it('refuses to parse or push a repo where the remote introduced a symlink', async () => {
+    const remote = await makeBareRemote(tmp.dir);
+    const hostile = join(tmp.dir, 'hostile');
+    const victim = join(tmp.dir, 'victim-rc');
+    writeFileSync(victim, 'original contents\n');
+    await cloneWithIdentity(remote, hostile, 'hostile');
+    // Committed with raw git, the way a hostile remote would arrive: MEMORY.md as a symlink.
+    mkdirSync(join(hostile, 'global'), { recursive: true });
+    symlinkSync(victim, join(hostile, 'global', 'MEMORY.md'));
+    await git(hostile, 'add', '-A');
+    await git(hostile, 'commit', '-q', '-m', 'hostile');
+    await git(hostile, 'push', '-q', 'origin', 'HEAD:main');
+
+    const victimDevice = join(tmp.dir, 'victim-device');
+    await cloneWithIdentity(remote, victimDevice, 'victim');
+    const store = new FileStore(victimDevice);
+    const r = await syncRepo(exec, store, { device: 'victim' });
+    expect(r.error).toContain('symlink inside memory repo: global/MEMORY.md');
+    expect(r.pushed).toBe(false);
+    expect(readFileSync(victim, 'utf8')).toBe('original contents\n');
   });
 });

@@ -1,11 +1,10 @@
-import { writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import type { Exec, ExecResult } from './exec.js';
 import { parseFrontmatter, stringifyFrontmatter } from './frontmatter.js';
 import { currentBranch } from './git.js';
 import { pruneAllHandoffs } from './handoff.js';
 import { regenerateIndex } from './memory.js';
-import { INDEX_FILE, type FileStore } from './store.js';
+import { INDEX_FILE, findUnsafeEntries, writeInsideRoot, type FileStore } from './store.js';
 
 export interface SyncResult {
   committed: boolean;
@@ -104,6 +103,16 @@ export async function syncRepo(exec: Exec, store: FileStore, opts: SyncOptions):
     result.pulled = true;
   }
 
+  // A pull can introduce symlinks (H4). Audit before anything is parsed, rendered or written.
+  const unsafe = await findUnsafeEntries(cwd);
+  if (unsafe.length) {
+    result.error =
+      `${unsafe.map((p) => `symlink inside memory repo: ${p}`).join(', ')}. ` +
+      `Nothing was parsed or pushed. Delete them (git -C ${cwd} rm <path>) and run hearth sync again.`;
+    log(result.error);
+    return result;
+  }
+
   for (const layer of await store.listLayers()) await regenerateIndex(store, layer);
   result.pruned = await pruneAllHandoffs(store, now);
   const maintenance = await commitAll(git, `hearth: post-sync maintenance (${opts.device})`);
@@ -166,7 +175,8 @@ async function resolveConflict(git: Git, cwd: string, file: string, device: stri
     const parsed = parseFrontmatter(local.stdout);
     const rewritten = stringifyFrontmatter(`${parsed.content.trim()}\n`, { ...parsed.data, name: conflictName });
     const copy = join(cwd, dirname(file), `${conflictName}.md`);
-    await writeFile(copy, rewritten, 'utf8');
+    // Guarded like every other write: the copy's name could itself have been planted as a symlink.
+    await writeInsideRoot(cwd, copy, rewritten);
     result.conflicts.push(file);
   }
   // Upstream keeps the original name; indexes are regenerated after the rebase.
