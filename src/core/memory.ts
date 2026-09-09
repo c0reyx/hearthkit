@@ -99,7 +99,9 @@ export async function readFact(store: MemoryStore, layer: LayerRef, name: string
 export async function listFacts(store: MemoryStore, layer: LayerRef): Promise<Fact[]> {
   const out: Fact[] = [];
   for (const name of await store.listFacts(layer)) {
-    const f = await readFact(store, layer, name);
+    // One unreadable or unsafe file must not take down a whole listing or the session-start
+    // block; `hearth doctor` reports what was skipped (H4).
+    const f = await readFact(store, layer, name).catch(() => null);
     if (f) out.push(f);
   }
   return out;

@@ -178,7 +178,14 @@ export function createMcpServer(deps: McpDeps): McpServer {
     { description: 'Pull, merge, and push the memory repo now. Reports conflicts kept as extra copies.', inputSchema: {} },
     () => guarded(async () => {
       const { cfg, store } = await open();
-      const r = await syncRepo(deps.exec, store, { device: cfg.device, now: now() });
+      let r;
+      try {
+        r = await syncRepo(deps.exec, store, { device: cfg.device, now: now() });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        await recordSyncOutcome(deps.home, message, now()).catch(() => undefined);
+        throw new HearthError(`Sync incomplete: ${message}`);
+      }
       await recordSyncOutcome(deps.home, r.error, now()).catch(() => undefined);
       if (r.error) throw new HearthError(`Sync incomplete: ${r.error}`);
       return `Synced.${r.committed ? ' Committed local changes.' : ''}${r.pulled ? ' Pulled.' : ''}${r.pushed ? ' Pushed.' : ' Nothing to push.'}${r.conflicts.length ? `\nConflicts kept as extra copies: ${r.conflicts.join(', ')}` : ''}`;

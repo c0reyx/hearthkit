@@ -34,11 +34,12 @@ export interface ContextInput {
    */
   unlinkedNote?: string | null;
   /**
-   * Set when the most recent sync failed (H3). It must be hearthkit's own fixed sentence: git
-   * output is remote-controlled and would be an injection channel outside the envelope, and can
-   * carry a remote URL with an embedded token. Details stay in the log and sync-state file.
+   * hearthkit's own status lines (a failed sync, ignored unsafe files). These must be fixed
+   * sentences: git output and file content are remote-controlled and would be an injection
+   * channel in a trusted position, and git text can carry a remote URL with an embedded token.
+   * Details stay in the log, the sync-state file and `hearth doctor`.
    */
-  syncNote?: string | null;
+  statusNotes?: (string | null)[];
 }
 
 const byAge = (a: Fact, b: Fact) => a.created.localeCompare(b.created) || a.name.localeCompare(b.name);
@@ -82,7 +83,8 @@ export async function buildContext(input: ContextInput): Promise<string> {
     }
     if (omitted) parts.push(`(omitted ${omitted} older memory lines to fit the context cap; use memory_search to find them)`, '');
     parts.push(ENVELOPE_CLOSE, '');
-    if (input.syncNote) parts.push(STATUS_OPEN, singleLine(input.syncNote, 200), STATUS_CLOSE, '');
+    const notes = (input.statusNotes ?? []).filter((n): n is string => Boolean(n));
+    if (notes.length) parts.push(STATUS_OPEN, ...notes.map((n) => singleLine(n, 200)), STATUS_CLOSE, '');
     parts.push(
       '## Tools',
       'Memory tools (MCP server "hearth"): memory_search, memory_read, memory_write, memory_list, memory_promote, memory_handoff.',

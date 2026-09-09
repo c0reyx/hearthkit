@@ -70,6 +70,7 @@ export async function syncRepo(exec: Exec, store: FileStore, opts: SyncOptions):
     const reset = await git('reset', '-q', '--hard', `origin/${branch}`);
     if (reset.code !== 0) {
       result.error = `could not check out origin/${branch}: ${reset.stderr.trim()}`;
+      log(result.error);
       return result;
     }
     result.pulled = true;

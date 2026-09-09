@@ -103,4 +103,20 @@ describe('FileStore refuses symlinks inside the memory repo (H4)', () => {
     expect(await findUnsafeEntries(dir)).toEqual(['global/evil.md']);
     expect(await findUnsafeEntries(join(tmp.dir, 'no-such-dir'))).toEqual([]);
   });
+
+  it('lists layers and facts without dying when an entry is unsafe, and can delete a symlink', async () => {
+    const { store, dir, victim } = root();
+    writeFileSync(join(dir, 'global', 'good.md'), '---\ndescription: good\n---\nbody\n');
+    symlinkSync(victim, join(dir, 'global', 'evil.md'));
+    mkdirSync(join(dir, 'projects'), { recursive: true });
+    symlinkSync(join(tmp.dir, 'elsewhere-2'), join(dir, 'projects', 'linked-project'));
+    // Listings degrade rather than throw: a hostile entry must not take down memory context,
+    // and a symlinked layer directory is not a layer.
+    expect(await store.listLayers()).toEqual([GLOBAL]);
+    expect(await store.listFacts(GLOBAL)).toEqual(['good']);
+    expect(await store.listFacts(project('linked-project'))).toEqual([]);
+    // ...and a hostile entry can be cleared: rm does not follow the link.
+    expect(await store.deleteFact(GLOBAL, 'evil')).toBe(true);
+    expect(readFileSync(victim, 'utf8')).toBe('original contents\n');
+  });
 });

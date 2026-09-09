@@ -109,6 +109,15 @@ export async function runDoctor(deps: DoctorDeps): Promise<Check[]> {
     checks.push(ok('pending', 'unsynced changes', 'none'));
   }
 
+  // H4: a hostile remote can commit a symlink; writing through one is an arbitrary file write.
+  // Reported before the conflict scan, which reads the layers: an unsafe entry must be named
+  // even if it makes a layer unreadable.
+  const unsafe = await findUnsafeEntries(cfg.memoryDir);
+  checks.push(unsafe.length
+    ? fail('symlinks', 'memory files are ordinary files', unsafe.map((p) => `symlink inside memory repo: ${p}`).join(', '),
+      `Delete each one (they are not memory and hearthkit refuses to read or write them): hearth memory delete <layer> <name>, or git -C ${cfg.memoryDir} rm <path> && hearth sync`)
+    : ok('symlinks', 'memory files are ordinary files', 'no symlinks or special files'));
+
   const store = new FileStore(cfg.memoryDir);
   const conflicts: string[] = [];
   for (const layer of await store.listLayers()) {
@@ -117,13 +126,6 @@ export async function runDoctor(deps: DoctorDeps): Promise<Check[]> {
   checks.push(conflicts.length
     ? warn('conflicts', 'conflicting memory copies', conflicts.join(', '), 'Compare each pair with hearth memory show, then delete the one you do not want: hearth memory delete <layer> <name>')
     : ok('conflicts', 'conflicting memory copies', 'none'));
-
-  // H4: a hostile remote can commit a symlink; writing through one is an arbitrary file write.
-  const unsafe = await findUnsafeEntries(cfg.memoryDir);
-  checks.push(unsafe.length
-    ? fail('symlinks', 'memory files are ordinary files', unsafe.map((p) => `symlink inside memory repo: ${p}`).join(', '),
-      `Delete each one (they are not memory and hearthkit refuses to read or write them): git -C ${cfg.memoryDir} rm <path> && hearth sync`)
-    : ok('symlinks', 'memory files are ordinary files', 'no symlinks or special files'));
 
   return checks;
 }

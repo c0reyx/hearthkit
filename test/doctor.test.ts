@@ -26,7 +26,7 @@ describe('runDoctor', () => {
   it('is all green on a healthy machine', async () => {
     await saveConfig(tmp.dir, defaultConfig(tmp.dir));
     const checks = await runDoctor({ exec: healthyExec(), home: tmp.dir, nodeVersion: 'v22.1.0' });
-    expect(checks.map((c) => c.id)).toEqual(['node', 'git', 'claude', 'gh', 'config', 'repo', 'visibility', 'remote', 'pending', 'conflicts', 'symlinks']);
+    expect(checks.map((c) => c.id)).toEqual(['node', 'git', 'claude', 'gh', 'config', 'repo', 'visibility', 'remote', 'pending', 'symlinks', 'conflicts']);
     expect(checks.every((c) => c.status === 'ok')).toBe(true);
     expect(doctorExitCode(checks)).toBe(0);
   });
@@ -97,5 +97,18 @@ describe('runDoctor', () => {
     const byId = Object.fromEntries(checks.map((c) => [c.id, c]));
     expect(byId.symlinks).toMatchObject({ status: 'fail', detail: 'symlink inside memory repo: global/MEMORY.md' });
     expect(doctorExitCode(checks)).toBe(2);
+  });
+
+  it('still reports when global/ itself is a symlink instead of crashing (H4 round 1)', async () => {
+    const cfg = defaultConfig(tmp.dir);
+    await saveConfig(tmp.dir, cfg);
+    mkdirSync(cfg.memoryDir, { recursive: true });
+    mkdirSync(join(tmp.dir, 'elsewhere'), { recursive: true });
+    symlinkSync(join(tmp.dir, 'elsewhere'), join(cfg.memoryDir, 'global'));
+    const checks = await runDoctor({ exec: healthyExec(), home: tmp.dir, nodeVersion: 'v22.0.0', online: false });
+    const byId = Object.fromEntries(checks.map((c) => [c.id, c]));
+    expect(byId.symlinks).toMatchObject({ status: 'fail', detail: 'symlink inside memory repo: global' });
+    expect(byId.conflicts?.status).toBe('ok');
+    expect(checks.map((c) => c.id)).toContain('symlinks');
   });
 });

@@ -1,6 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildProgram, runCli, type CliDeps } from '../src/cli/program.js';
@@ -191,5 +191,46 @@ describe('project binding closes the first-sight and explicit-slug bypasses (H1)
     await client.close();
     expect(existsSync(join(memory, 'projects', 'acme-crm', 'planted.md'))).toBe(false);
     expect(existsSync(join(memory, 'global', 'prod-db.md'))).toBe(false);
+  });
+});
+
+/**
+ * Round 1 (H4): a hostile entry must degrade to a message, not kill the command. The CLI
+ * harness above is reused here because these are whole-command behaviours.
+ */
+describe('CLI degrades on unsafe memory entries (H4)', () => {
+  const tmp = mkTmpDir();
+  const home = join(tmp.dir, 'home');
+  const memory = join(home, 'memory');
+  const repo = join(tmp.dir, 'repo');
+
+  beforeAll(async () => {
+    await saveConfig(home, { ...defaultConfig(home), device: 'mac' });
+    mkdirSync(join(memory, 'global'), { recursive: true });
+    writeFileSync(join(memory, 'global', 'good.md'), '---\ndescription: a real fact\n---\nbody\n');
+    writeFileSync(join(tmp.dir, 'victim-rc'), 'original\n');
+    symlinkSync(join(tmp.dir, 'victim-rc'), join(memory, 'global', 'evil.md'));
+    await exec.run('git', ['init', '-q', repo]);
+  });
+  afterAll(() => tmp.cleanup());
+
+  it('memory context still renders, says entries were ignored, and quotes no paths', async () => {
+    const ctx = await hearth(home, repo, ['memory', 'context'], JSON.stringify({ cwd: repo }));
+    expect(ctx.code).toBe(0);
+    expect(ctx.stdout).toContain('- good: a real fact');
+    expect(ctx.stdout).toContain('<hearth-status>');
+    expect(ctx.stdout).toContain('not an ordinary file');
+    expect(ctx.stdout).toContain('run `hearth doctor`');
+    expect(ctx.stdout).not.toContain('victim-rc');
+  });
+
+  it('hearth list flags the entry and hearth memory delete can clear it', async () => {
+    const list = await hearth(home, repo, ['list']);
+    expect(list.code, list.stderr).toBe(0);
+    expect(list.stdout).toContain('global/evil.md');
+    const del = await hearth(home, repo, ['memory', 'delete', 'global', 'evil']);
+    expect(del.code, del.stderr).toBe(0);
+    expect(existsSync(join(memory, 'global', 'evil.md'))).toBe(false);
+    expect(readFileSync(join(tmp.dir, 'victim-rc'), 'utf8')).toBe('original\n');
   });
 });

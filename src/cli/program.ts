@@ -11,7 +11,7 @@ import { appendLog } from '../core/log.js';
 import { deleteFact, listFacts, promoteFact, writeFact } from '../core/memory.js';
 import { assertLinked, linkProject, resolveProject, unlinkedMessage, type ProjectRef } from '../core/project.js';
 import { search } from '../core/search.js';
-import { FileStore } from '../core/store.js';
+import { FileStore, findUnsafeEntries } from '../core/store.js';
 import { syncRepo } from '../core/sync.js';
 import { readSyncState, recordSyncOutcome, syncErrorNote } from '../core/syncstate.js';
 import { FACT_TYPES, HearthError, layerId, parseLayerId, project, type FactType, type LayerRef } from '../core/types.js';
@@ -79,6 +79,13 @@ function factType(v: string | undefined): FactType | undefined {
 
 const LAYER_HELP = 'global | project (current folder) | project:<slug> | projects/<slug>';
 
+/** A fixed sentence — never the paths themselves — when the memory repo holds unsafe entries. */
+async function unsafeNote(memoryDir: string): Promise<string | null> {
+  const unsafe = await findUnsafeEntries(memoryDir).catch(() => []);
+  if (unsafe.length === 0) return null;
+  return `${unsafe.length} entr${unsafe.length === 1 ? 'y' : 'ies'} under the memory repo ${unsafe.length === 1 ? 'is' : 'are'} not an ordinary file and ${unsafe.length === 1 ? 'was' : 'were'} ignored; run \`hearth doctor\`.`;
+}
+
 export function buildProgram(deps: CliDeps): Command {
   const out = deps.stdout;
   const now = () => deps.now?.() ?? new Date();
@@ -116,7 +123,7 @@ export function buildProgram(deps: CliDeps): Command {
   });
 
   program.command('list').description('Layers, fact counts, handoffs, conflicts').action(async () => {
-    const { store } = await openStore(deps);
+    const { cfg, store } = await openStore(deps);
     const lines: string[] = [];
     for (const layer of await store.listLayers()) {
       const facts = await listFacts(store, layer);
@@ -128,6 +135,10 @@ export function buildProgram(deps: CliDeps): Command {
           (conflicts ? `  ! ${conflicts} conflict cop${conflicts === 1 ? 'y' : 'ies'}` : ''),
       );
     }
+    const unsafe = await findUnsafeEntries(cfg.memoryDir).catch(() => []);
+    if (unsafe.length) {
+      lines.push('', `! ignored ${unsafe.length} entr${unsafe.length === 1 ? 'y' : 'ies'} that ${unsafe.length === 1 ? 'is' : 'are'} not an ordinary file: ${unsafe.join(', ')}`, '  Run hearth doctor, then: hearth memory delete <layer> <name>');
+    }
     out(lines.length ? `${lines.join('\n')}\n` : 'No memory yet. Start a Claude Code session, or run: hearth memory add global "..."\n');
   });
 
@@ -137,7 +148,17 @@ export function buildProgram(deps: CliDeps): Command {
     .option('--quiet', 'print nothing unless there is an error')
     .action(async (o: { quiet?: boolean }) => {
       const { cfg, store } = await openStore(deps);
-      const r = await syncRepo(deps.exec, store, { device: cfg.device, now: now() });
+      // A thrown error (a symlink refusal mid-sync, say) has to be recorded too, or the next
+      // session-start block would report the last *returned* failure and nothing since.
+      let r;
+      try {
+        r = await syncRepo(deps.exec, store, { device: cfg.device, now: now() });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        await recordSyncOutcome(deps.home, message, now()).catch(() => undefined);
+        await appendLog(deps.home, { command: 'sync', error: message }).catch(() => undefined);
+        throw new HearthError(`Sync incomplete: ${message}`, 2);
+      }
       await recordSyncOutcome(deps.home, r.error, now()).catch(() => undefined);
       if (r.error) {
         // A background sync prints nowhere, so the log is the only record of a failure.
@@ -247,7 +268,7 @@ export function buildProgram(deps: CliDeps): Command {
       out(await buildContext({
         store, slug: ref.slug, capTokens: cfg.contextCapTokens,
         unlinkedNote: ref.linked ? null : unlinkedMessage(ref),
-        syncNote: syncErrorNote(await readSyncState(deps.home)),
+        statusNotes: [syncErrorNote(await readSyncState(deps.home)), await unsafeNote(cfg.memoryDir)],
       }));
     }));
 

@@ -47,8 +47,11 @@ async function lstatOrNull(path: string) {
   }
 }
 
-/** Validates every path component under `root`; `target` must be a regular file if it exists. */
-async function assertInsideRoot(root: string, target: string): Promise<void> {
+/**
+ * Validates every path component under `root`; `target` must be a regular file if it exists.
+ * `allowLink` permits the final component to be a symlink, for deletion only.
+ */
+async function assertInsideRoot(root: string, target: string, opts: { allowLink?: boolean } = {}): Promise<void> {
   const rel = relative(root, target);
   if (!rel || rel.startsWith('..') || isAbsolute(rel)) {
     throw new HearthError(`Refusing to touch ${target}: it is outside the memory repo at ${root}.`);
@@ -60,8 +63,11 @@ async function assertInsideRoot(root: string, target: string): Promise<void> {
     cur = join(cur, part);
     const st = await lstatOrNull(cur);
     if (st === null) break; // nothing below an absent component can exist either
-    if (st.isSymbolicLink()) throw symlinkError(cur);
     const last = i === parts.length - 1;
+    if (st.isSymbolicLink()) {
+      if (last && opts.allowLink) return; // deleting the link itself is safe and necessary
+      throw symlinkError(cur);
+    }
     if (last) {
       if (!st.isFile()) throw new HearthError(`Refusing to use ${cur}: it is not a regular file.`);
     } else {
@@ -111,7 +117,9 @@ async function writeEnsuring(root: string, path: string, content: string): Promi
 }
 
 async function removeIfExists(root: string, path: string): Promise<boolean> {
-  await assertInsideRoot(root, path);
+  // allowLink: `rm` does not follow the link, and the user must be able to clear a hostile
+  // entry with `hearth memory delete` rather than reaching for git by hand.
+  await assertInsideRoot(root, path, { allowLink: true });
   try {
     await rm(path);
     return true;
@@ -190,9 +198,17 @@ export class FileStore implements MemoryStore {
 
   async listLayers(): Promise<LayerRef[]> {
     const layers: LayerRef[] = [];
-    if ((await readOrNull(this.root, join(this.root, 'global', '.gitkeep'))) !== null || (await listMd(join(this.root, 'global'))).length > 0) {
-      layers.push(GLOBAL);
-    }
+    // Tolerant by design: a hostile entry (a symlinked `global/`, say) must degrade to "this
+    // layer is not usable" so `hearth list`, `hearth doctor` and `memory context` can still
+    // report, rather than throwing out of a listing and dying silently under hookSafe (H4).
+    const globalUsable = await (async () => {
+      try {
+        return (await readOrNull(this.root, join(this.root, 'global', '.gitkeep'))) !== null || (await listMd(join(this.root, 'global'))).length > 0;
+      } catch {
+        return false;
+      }
+    })();
+    if (globalUsable) layers.push(GLOBAL);
     try {
       const entries = await readdir(join(this.root, 'projects'), { withFileTypes: true });
       for (const e of entries.filter((e) => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
@@ -205,7 +221,13 @@ export class FileStore implements MemoryStore {
   }
 
   async listFacts(layer: LayerRef): Promise<string[]> {
-    return listMd(this.layerDir(layer));
+    const dir = this.layerDir(layer);
+    try {
+      await assertInsideRoot(this.root, join(dir, '.probe'));
+    } catch {
+      return []; // an unsafe layer directory yields no facts instead of throwing
+    }
+    return listMd(dir);
   }
 
   async readFact(layer: LayerRef, name: string): Promise<string | null> {

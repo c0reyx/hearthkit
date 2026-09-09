@@ -203,7 +203,7 @@ describe('buildContext survives hostile files written directly to disk (H2)', ()
     const store = new FileStore(tmp.dir);
     const out = await buildContext({
       store, slug: 'acme', capTokens: 4000,
-      syncNote: 'Memory sync failed on 2026-09-09; run `hearth doctor`.',
+      statusNotes: ['Memory sync failed on 2026-09-09; run `hearth doctor`.'],
     });
     expect(out).toContain('Memory sync failed on 2026-09-09; run `hearth doctor`.');
     expect(out).toContain('<hearth-status>');
