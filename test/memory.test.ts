@@ -138,4 +138,15 @@ describe('untrusted frontmatter (C1)', () => {
     expect(() => parseFact('fn', yamlFn)).not.toThrow();
     expect((globalThis as Record<string, unknown>).__pwned).toBeUndefined();
   });
+
+  it('stores a fact whose body starts with a delimiter without throwing', async () => {
+    const store = new FileStore(tmp.dir);
+    const f = await writeFact(store, { layer: GLOBAL, text: "---js\n(function(){ globalThis.__pwned = true })()\n---\ntail", name: 'weird', device: 'mac' });
+    expect(f.body).toContain('---js');
+    delete (globalThis as Record<string, unknown>).__pwned;
+    const back = await readFact(store, GLOBAL, 'weird');
+    expect((globalThis as Record<string, unknown>).__pwned).toBeUndefined();
+    expect(back?.body).toContain('---js');
+    expect(back?.body).toContain('tail');
+  });
 });

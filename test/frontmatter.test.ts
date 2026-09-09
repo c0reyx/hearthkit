@@ -53,4 +53,21 @@ describe('parseFrontmatter', () => {
   it('reads a file with no frontmatter at all as pure content', () => {
     expect(parseFrontmatter('just text\n')).toEqual({ data: {}, content: 'just text\n' });
   });
+
+  it('never re-parses the body it is given (C1 round 1)', () => {
+    // A body that starts with a delimiter must survive verbatim: gray-matter's stringify used to
+    // re-parse a string body, so `---js` threw (breaking promote and conflict re-serialisation
+    // permanently) and `---\nfoo: bar\n---` was absorbed into the frontmatter.
+    const js = "---js\n(function(){ globalThis.__pwned = true })()\n---\ntail\n";
+    const out = stringifyFrontmatter(js, { name: 'weird' });
+    expect(marker()).toBeUndefined();
+    expect(out).toContain('name: weird');
+    expect(parseFrontmatter(out).content).toContain('---js');
+
+    const absorbed = stringifyFrontmatter('---\nfoo: bar\n---\nreal body\n', { name: 'weird2' });
+    const back = parseFrontmatter(absorbed);
+    expect(back.data).toEqual({ name: 'weird2' });
+    expect(back.data.foo).toBeUndefined();
+    expect(back.content).toContain('foo: bar');
+  });
 });

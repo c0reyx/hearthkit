@@ -65,7 +65,16 @@ export function parseFrontmatter(raw: string): Frontmatter {
   }
 }
 
-/** Write YAML frontmatter above `content`. */
+/**
+ * Write YAML frontmatter above `content`.
+ *
+ * The body is handed over as a file object, never as a string: `matter.stringify(<string>, …)`
+ * re-parses what it is given (index.js:161), so a body that itself begins with `---js` threw
+ * through the refusing engine above — fail-closed, but remote-triggerable, and it would have
+ * broken `memory promote` and conflict re-serialisation permanently — while a body beginning
+ * `---\nfoo: bar\n---` was absorbed into the frontmatter.
+ */
 export function stringifyFrontmatter(content: string, data: Record<string, unknown>): string {
-  return matter.stringify(content, data, OPTS);
+  const file = { content, data: {} };
+  return matter.stringify(file, data, OPTS);
 }
