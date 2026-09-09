@@ -7,7 +7,7 @@ import { currentBranch } from '../core/git.js';
 import { writeHandoff } from '../core/handoff.js';
 import { initMemory } from '../core/init.js';
 import { listFacts, promoteFact, renderIndex, writeFact } from '../core/memory.js';
-import { projectSlug } from '../core/project.js';
+import { assertLinked, resolveProject, type ProjectRef } from '../core/project.js';
 import { search } from '../core/search.js';
 import { FileStore } from '../core/store.js';
 import { syncRepo } from '../core/sync.js';
@@ -39,9 +39,17 @@ export function createMcpServer(deps: McpDeps): McpServer {
 
   const open = async () => {
     const cfg = await requireConfig(deps.home);
-    return { cfg, store: new FileStore(cfg.memoryDir), slug: await projectSlug(deps.exec, deps.cwd) };
+    const ref = await resolveProject({ exec: deps.exec, home: deps.home, cwd: deps.cwd, now: deps.now?.() });
+    return { cfg, store: new FileStore(cfg.memoryDir), slug: ref.slug, ref };
   };
-  const layerOf = (layer: string, slug: string): LayerRef => (layer === 'project' ? project(slug) : parseLayerId(layer));
+  // "project" means "the layer bound to this directory on this machine": a checkout that merely
+  // claims another project's origin URL gets no access to it (H1). Linking is human-only, via
+  // `hearth project link`; there is deliberately no MCP tool for it.
+  const layerOf = (layer: string, ref: ProjectRef): LayerRef => {
+    if (layer !== 'project') return parseLayerId(layer);
+    assertLinked(ref);
+    return project(ref.slug);
+  };
 
   server.registerTool(
     'memory_search',
@@ -50,8 +58,8 @@ export function createMcpServer(deps: McpDeps): McpServer {
       inputSchema: { query: z.string().describe('keywords to look for') },
     },
     ({ query }) => guarded(async () => {
-      const { store, slug } = await open();
-      const hits = await search(store, query, slug);
+      const { store, ref } = await open();
+      const hits = await search(store, query, ref.linked ? ref.slug : null);
       return hits.length ? hits.map((h) => `${h.layer}/${h.name} (${h.kind}, score ${h.score}): ${h.description}`).join('\n') : 'No matches.';
     }),
   );
@@ -60,8 +68,8 @@ export function createMcpServer(deps: McpDeps): McpServer {
     'memory_list',
     { description: `List the facts in one memory layer. ${LAYER_DESC}`, inputSchema: { layer: z.string() } },
     ({ layer }) => guarded(async () => {
-      const { store, slug } = await open();
-      const l = layerOf(layer, slug);
+      const { store, ref } = await open();
+      const l = layerOf(layer, ref);
       return renderIndex(l, await listFacts(store, l));
     }),
   );
@@ -70,8 +78,8 @@ export function createMcpServer(deps: McpDeps): McpServer {
     'memory_read',
     { description: `Read one fact in full. ${LAYER_DESC}`, inputSchema: { layer: z.string(), name: z.string() } },
     ({ layer, name }) => guarded(async () => {
-      const { store, slug } = await open();
-      const l = layerOf(layer, slug);
+      const { store, ref } = await open();
+      const l = layerOf(layer, ref);
       const raw = await store.readFact(l, name);
       if (raw === null) throw new HearthError(`No fact "${name}" in ${layerId(l)}.`);
       return raw;
@@ -91,8 +99,8 @@ export function createMcpServer(deps: McpDeps): McpServer {
       },
     },
     ({ layer, text, name, type, pinned }) => guarded(async () => {
-      const { cfg, store, slug } = await open();
-      const l = layerOf(layer, slug);
+      const { cfg, store, ref } = await open();
+      const l = layerOf(layer, ref);
       const f = await writeFact(store, { layer: l, text, name, type, pinned, device: cfg.device, now: now() });
       return `Saved ${layerId(l)}/${f.name}.md`;
     }),
@@ -105,7 +113,8 @@ export function createMcpServer(deps: McpDeps): McpServer {
       inputSchema: { name: z.string(), from_project: z.string().optional().describe('project slug; defaults to the current project') },
     },
     ({ name, from_project }) => guarded(async () => {
-      const { store, slug } = await open();
+      const { store, slug, ref } = await open();
+      if (from_project === undefined) assertLinked(ref);
       await promoteFact(store, name, project(from_project ?? slug));
       return `Promoted ${name} to global.`;
     }),
@@ -124,7 +133,8 @@ export function createMcpServer(deps: McpDeps): McpServer {
       },
     },
     (a) => guarded(async () => {
-      const { cfg, store, slug } = await open();
+      const { cfg, store, slug, ref } = await open();
+      assertLinked(ref);
       const h = await writeHandoff(store, {
         slug, device: cfg.device, source: 'agent', session: '', branch: (await currentBranch(deps.exec, deps.cwd)) ?? '',
         workingOn: a.working_on, decisions: a.decisions, openThreads: a.open_threads, nextSteps: a.next_steps, filesTouched: a.files_touched, now: now(),

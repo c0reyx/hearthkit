@@ -20,6 +20,11 @@ export interface ContextInput {
   store: MemoryStore;
   slug: string;
   capTokens: number;
+  /**
+   * Set when this checkout is not the one the slug is bound to on this machine (H1). The
+   * project layer is then neither read nor mentioned beyond a line telling the user how to link.
+   */
+  unlinkedNote?: string | null;
 }
 
 const byAge = (a: Fact, b: Fact) => a.created.localeCompare(b.created) || a.name.localeCompare(b.name);
@@ -27,21 +32,36 @@ const byName = (a: Fact, b: Fact) => a.name.localeCompare(b.name);
 
 export async function buildContext(input: ContextInput): Promise<string> {
   const { store, slug, capTokens } = input;
-  const handoff = await latestHandoff(store, slug);
+  const unlinked = input.unlinkedNote ?? null;
+  const handoff = unlinked ? null : await latestHandoff(store, slug);
   const globalFacts = await listFacts(store, GLOBAL);
-  const projectFacts = await listFacts(store, project(slug));
+  const projectFacts = unlinked ? [] : await listFacts(store, project(slug));
   const pinned = [...globalFacts, ...projectFacts].filter((f) => f.pinned);
   let gLines = globalFacts.filter((f) => !f.pinned).sort(byAge);
   let pLines = projectFacts.filter((f) => !f.pinned).sort(byAge);
   let omitted = 0;
 
+  // "1 facts" and a layer whose only fact is pinned printing "(none yet)" were both reported
+  // as cosmetic bugs alongside H1.
+  const counted = (n: number) => `${n} fact${n === 1 ? '' : 's'}`;
+  const lines = (shown: Fact[], total: number): string[] => {
+    if (shown.length) return [...shown].sort(byName).map(indexLine);
+    return [total > 0 ? '(all pinned; see "Pinned facts" below)' : '(none yet)'];
+  };
+
   const render = (): string => {
     const parts = ['# hearthkit memory', ''];
-    parts.push(handoff ? renderHandoff(handoff) : '## Last handoff\nNo handoff yet for this project.', '');
-    parts.push(`## Global memory (${globalFacts.length} facts)`);
-    parts.push(...(gLines.length ? [...gLines].sort(byName).map(indexLine) : ['(none yet)']), '');
-    parts.push(`## Project memory: projects/${slug} (${projectFacts.length} facts)`);
-    parts.push(...(pLines.length ? [...pLines].sort(byName).map(indexLine) : ['(none yet)']), '');
+    if (unlinked) {
+      parts.push(`## Project memory: projects/${slug}`, unlinked, '');
+    } else {
+      parts.push(handoff ? renderHandoff(handoff) : '## Last handoff\nNo handoff yet for this project.', '');
+    }
+    parts.push(`## Global memory (${counted(globalFacts.length)})`);
+    parts.push(...lines(gLines, globalFacts.length), '');
+    if (!unlinked) {
+      parts.push(`## Project memory: projects/${slug} (${counted(projectFacts.length)})`);
+      parts.push(...lines(pLines, projectFacts.length), '');
+    }
     if (pinned.length) {
       parts.push('## Pinned facts');
       for (const f of pinned) parts.push(`### ${f.name}`, f.body, '');
