@@ -1,0 +1,8 @@
+{
+  "extraKnownMarketplaces": {
+    "corey-skills": { "source": { "source": "github", "repo": "c0reyx/claude-skills" } }
+  },
+  "enabledPlugins": {
+    "corey-dev@corey-skills": true
+  }
+}
